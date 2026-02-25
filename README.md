@@ -29,7 +29,13 @@ PCB_lightgraph is a specialized CAD utility that converts illustrations into mul
     * **物理光效 | Physics-based Falloff**: 基于分段距离算法模拟光线在 FR4 基材中的散射衰减。 | Simulates light scattering using segment-distance attenuation.
 
 ---
+软件界面
+![示例图片1](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/show1.png)
 
+导出示例（未自动布灯）
+![示例图片2](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/show2.png)
+
+---
 ## 🛠️ 核心控制 | Core Controls
 
 | 功能 | Feature | 描述 | Description |
