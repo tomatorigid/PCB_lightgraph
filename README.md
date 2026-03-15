@@ -49,6 +49,7 @@ PCB_lightgraph is a specialized CAD utility that converts illustrations into mul
 
 ## 🚀 使用指南 | Usage Guide
 
+0. **下载软件 | Download**: 从Release下载最新发布版本 | Download the latest release version from ‘Release’.
 1. **导入图片 | Import**: 加载您的目标插画文件。 | Load your target illustration file.
 2. **调整阈值 | Adjust**: 通过滑动条定义金属、丝印和透光区域。 | Define metal, silk, and transmissive areas via sliders.
 3. **布局灯条 | Place LEDs**: 使用“自动布灯”或手动在预览图上点击拖拽。 | Use "Auto-Suggest" or drag on preview to place LEDs manually.
