@@ -10,7 +10,7 @@
 #include <QDebug>
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
-    setWindowTitle("PCB 透光画拆分工具 ");
+    setWindowTitle("PCB 透光画拆分工具 https://github.com/tomatorigid/PCB_lightgraph");
     //resize(1200, 800);
 }
 
@@ -64,6 +64,20 @@ void MainWindow::setupUI() {
     s_trans  = createSlider("基材透光阈值", 0, 255, 120, ctrl);
     s_ledRad = createSlider("灯光散射半径", 20, 500, 150, ctrl);
     s_autoSense = createSlider("自动布灯敏感度(0关)", 0, 10, 1, ctrl);
+    check_edge = new QCheckBox("启用描边 (边缘增强)");
+    ctrl->addWidget(check_edge);
+
+    s_edgeThresh = createSlider("边缘阈值", 0, 255, 50, ctrl);
+    s_autoInvert = createSlider("自动反色范围", -1, 50, 10, ctrl);
+
+    // 初始化状态控制：勾选才启用滑动条
+    s_edgeThresh->setEnabled(false);
+    s_autoInvert->setEnabled(false);
+    connect(check_edge, &QCheckBox::toggled, [=](bool checked){
+        s_edgeThresh->setEnabled(checked);
+        s_autoInvert->setEnabled(checked);
+        updateProcess();
+    });
 
     QPushButton *btn_load = new QPushButton("1. 导入图片");
     btn_load->setMinimumHeight(40);
@@ -74,7 +88,7 @@ void MainWindow::setupUI() {
     connect(btn_auto, &QPushButton::clicked, this, &MainWindow::autoSuggestLEDs);
     ctrl->addWidget(btn_auto);
 
-    btn_export = new QPushButton("3. 导出生产图纸");
+    btn_export = new QPushButton("3. 导出各层图纸");
     btn_export->setEnabled(false);
     btn_export->setMinimumHeight(50);
     btn_export->setStyleSheet("background-color: #2d5a2d; color: white; font-weight: bold;");
@@ -123,6 +137,57 @@ void MainWindow::updateProcess() {
     int w = m_origin.width();
     int h = m_origin.height();
 
+
+    processedOrigin = m_origin; // 默认使用原图
+        if (check_edge && check_edge->isChecked()) {
+            int eth = s_edgeThresh->value();
+            int invR = s_autoInvert->value();
+
+            for (int y = 1; y < h - 1; ++y) {
+                for (int x = 1; x < w - 1; ++x) {
+                    // 3x3 简单的拉普拉斯卷积核进行边缘检测
+                    int center = qGray(m_origin.pixel(x, y));
+                    int edgeVal = std::abs(4 * center - qGray(m_origin.pixel(x-1, y))
+                                                   - qGray(m_origin.pixel(x+1, y))
+                                                   - qGray(m_origin.pixel(x, y-1))
+                                           - qGray(m_origin.pixel(x, y+1)));
+
+                    if (edgeVal > eth) {
+                        int invR = s_autoInvert->value();
+                        QColor edgeColor;
+
+                        if (invR == -1) {
+                            // 值为 -1：强制全黑
+                            edgeColor = qRgb(0, 0, 0);
+                        }
+                        else if (invR == 0) {
+                            // 值为 0：强制全白
+                            edgeColor = qRgb(255, 255, 255);
+                        }
+                        else {
+                            // 值 > 0：执行原有的自动反色逻辑
+                            long long sumGray = 0;
+                            int count = 0;
+                            for(int dy = -invR; dy <= invR; ++dy) {
+                                for(int dx = -invR; dx <= invR; ++dx) {
+                                    int nx = x + dx, ny = y + dy;
+                                    if(nx >= 0 && nx < w && ny >= 0 && ny < h) {
+                                        sumGray += qGray(m_origin.pixel(nx, ny));
+                                        count++;
+                                    }
+                                }
+                            }
+                            int avg = sumGray / count;
+                            edgeColor = (avg > 128) ? qRgb(0, 0, 0) : qRgb(255, 255, 255);
+                        }
+
+                        processedOrigin.setPixel(x, y, edgeColor.rgb());
+                    }
+                }
+            }
+        }
+
+
     // 1. 获取 UI 参数（缓存参数，避免在百万次循环中重复查询 UI 组件）
     QString maskColorName = combo_maskColor->currentText();
     QColor maskColor = getSolderMaskColor();
@@ -151,7 +216,7 @@ void MainWindow::updateProcess() {
         QRgb *lineSilk   = (QRgb *)imgSilk.scanLine(y);
         QRgb *lineBottom = (QRgb *)imgBottom.scanLine(y);
         QRgb *lineComp   = (QRgb *)imgComp.scanLine(y);
-        const QRgb *lineOri = (const QRgb *)m_origin.constScanLine(y);
+        const QRgb *lineOri = (const QRgb *)processedOrigin.constScanLine(y);
 
         for (int x = 0; x < w; ++x) {
             QColor col(lineOri[x]);
@@ -263,12 +328,12 @@ void MainWindow::updateProcess() {
     setScaled(l_ledLayer,  imgLED_Preview);
 }
 void MainWindow::autoSuggestLEDs() {
-    if (m_origin.isNull()) return;
+    if (processedOrigin.isNull()) return;
     m_ledStrips.clear();
 
     // 修复：必须先获取图片的宽高
-    int w = m_origin.width();
-    int h = m_origin.height();
+    int w = processedOrigin.width();
+    int h = processedOrigin.height();
 
     int targetCount = s_autoSense->value();
     if (targetCount <= 0) { updateProcess(); return; }
@@ -283,7 +348,7 @@ void MainWindow::autoSuggestLEDs() {
     // 1. 采样：寻找彩色区域
     for(int y = 0; y < h; y += 15) {
         for(int x = 0; x < w; x += 15) {
-            QColor c = m_origin.pixelColor(x, y);
+            QColor c = processedOrigin.pixelColor(x, y);
             if (c.value() > 80) {
                 // 饱和度低判定为灰色区 (-1)，否则按色相分桶
                 int bucketIdx = (c.saturation() < 30) ? -1 : (c.hue() / 30);
@@ -319,7 +384,7 @@ void MainWindow::autoSuggestLEDs() {
         QColor bestCol = Qt::white;
 
         for(const QPoint& p : buckets[rb.id].points) {
-            QColor c = m_origin.pixelColor(p.x(), p.y());
+            QColor c = processedOrigin.pixelColor(p.x(), p.y());
             if (c.value() > maxV) {
                 // 简单的间距检查
                 bool tooClose = false;
@@ -347,7 +412,7 @@ void MainWindow::autoSuggestLEDs() {
     updateProcess();
 }
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
-    if (obj == l_composite && !m_origin.isNull()) {
+    if (obj == l_composite && !processedOrigin.isNull()) {
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent *me = static_cast<QMouseEvent*>(event);
             if (me->button() == Qt::LeftButton) {
@@ -372,7 +437,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                     float ry = (float)clickY / pixmapSize.height();
 
                     // 4. 存储为原始图片坐标（用于算法计算）
-                    QPoint imgPos(rx * m_origin.width(), ry * m_origin.height());
+                    QPoint imgPos(rx * processedOrigin.width(), ry * processedOrigin.height());
 
                     if (!m_isPlacing) {
                         m_pendingStart = imgPos;
@@ -383,7 +448,7 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                         s.end = imgPos;
                         s.radius = s_ledRad->value();
                         // 智能颜色提取：取终点像素色作为灯条色
-                        s.color = m_origin.pixelColor(imgPos.x(), imgPos.y());
+                        s.color = processedOrigin.pixelColor(imgPos.x(), imgPos.y());
                         if (s.color.value() < 50) s.color = Qt::white; // 太暗则默认白光
 
                         m_ledStrips.append(s);
@@ -420,12 +485,12 @@ void MainWindow::loadAndProcess() {
 }
 
 void MainWindow::exportLayers() {
-    if (m_origin.isNull()) return;
+    if (processedOrigin.isNull()) return;
     QString d = QFileDialog::getExistingDirectory(this, "选择导出目录");
     if (d.isEmpty()) return;
 
-    int w = m_origin.width();
-    int h = m_origin.height();
+    int w = processedOrigin.width();
+    int h = processedOrigin.height();
     QString finishName = (combo_surfaceFinish->currentText().contains("沉金")) ? "ENIG" : "HASL";
 
     // 1. 导出四个生产层 (反色 1-bit)
@@ -469,7 +534,7 @@ float MainWindow::distanceToSegment(QPoint p, QPoint v, QPoint w) {
 }
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
-    if (!m_origin.isNull()) {
+    if (!processedOrigin.isNull()) {
         updateProcess();
     }
 }

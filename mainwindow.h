@@ -11,6 +11,7 @@
 #include <QPoint>
 #include <QComboBox>
 #include <QPainter>
+#include <QCheckBox>
 
 struct LEDStrip {
     QPoint start;
@@ -55,6 +56,9 @@ private:
     QPushButton *btn_export;
     QComboBox *combo_surfaceFinish; // 表面处理：沉金 / 喷锡
     //QSlider *s_autoSense;
+    QCheckBox *check_edge;
+    QSlider *s_edgeThresh, *s_autoInvert;
+    QImage processedOrigin;
 
     // 物理参数
     QColor getSolderMaskColor();
