@@ -49,6 +49,9 @@ PCB_lightgraph is a specialized CAD utility that converts illustrations into mul
 边缘增强（开启）
 ![示例图片2](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/edge_on.png)
 
+参考视频
+[点击观看视频：以战双帕弥什露西亚为例子](https://www.bilibili.com/video/BV1EgAaz2Exx/)
+
 ---
 ## 🛠️ 核心控制 | Core Controls
 
