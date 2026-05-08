@@ -7,7 +7,7 @@ PCB_lightgraph is a specialized CAD utility that converts illustrations into mul
 [![Qt](https://img.shields.io/badge/Framework-Qt%205.x-blue.svg)](https://www.qt.io/)
 
 ## 📖 简介 | Introduction
-**PCB_lightgraph** 是一款专为艺术家和硬件工程师设计的工具，用于将 2D 插画转换为可制造的 PCB 透光艺术画。  
+**PCB_lightgraph** 是一款专为艺术家和硬件工程师设计的工具，用于将 2D 插画转换为可制造的 PCB 透光艺术画，目前能做到不算背光情况下单面四色。（正在努力使这个项目永远是最好用的PCB画工具QWQ）  
 **PCB_lightgraph** is a high-performance utility designed for artists and hardware engineers to transform 2D illustrations into manufacturable PCB light-guide artwork.
 
 ---
@@ -38,10 +38,8 @@ PCB_lightgraph is a specialized CAD utility that converts illustrations into mul
 
 ---
 软件界面
-![示例图片1](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/show1.png)
+<img width="2559" height="1521" alt="屏幕截图 2026-05-08 212013" src="https://github.com/user-attachments/assets/ea3f0a1f-cd2b-49db-b08f-d1f1839b91fc" />
 
-导出示例（未自动布灯）
-![示例图片2](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/show2.png)
 
 边缘增强（关闭）
 ![示例图片2](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/edge_off.png)
