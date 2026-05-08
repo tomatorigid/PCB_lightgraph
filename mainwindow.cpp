@@ -5,13 +5,29 @@
 #include <QFileDialog>
 #include <QMessageBox>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QPainter>
 #include <cmath>
 #include <QDebug>
+
+namespace {
+static QRectF calcPreviewRect(const QSize& labelSize, const QSize& imageSize, double zoom, const QPointF& pan) {
+    if (!labelSize.isValid() || !imageSize.isValid() || imageSize.isEmpty()) return QRectF();
+
+    const double sx = static_cast<double>(labelSize.width()) / imageSize.width();
+    const double sy = static_cast<double>(labelSize.height()) / imageSize.height();
+    const double fit = qMin(sx, sy);
+    const double drawW = imageSize.width() * fit * zoom;
+    const double drawH = imageSize.height() * fit * zoom;
+    const double x = (labelSize.width() - drawW) * 0.5 + pan.x();
+    const double y = (labelSize.height() - drawH) * 0.5 + pan.y();
+    return QRectF(x, y, drawW, drawH);
+}
+}
+
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setupUI();
-    setWindowTitle("PCB 透光画拆分工具 https://github.com/tomatorigid/PCB_lightgraph");
-    //resize(1200, 800);
+    setWindowTitle("PCB  透光画拆分工具 https://github.com/tomatorigid/PCB_lightgraph");
 }
 
 MainWindow::~MainWindow() {}
@@ -30,15 +46,8 @@ void MainWindow::setupUI() {
     l_composite->setStyleSheet("border: 2px solid #FFD700; background: #1a1a1a;");
     l_composite->installEventFilter(this);
 
-    l_ledLayer = new QLabel("灯条布线参考");
-    l_ledLayer->setFixedHeight(150); // 灯条建议区固定高度，宽度随动
-    l_ledLayer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-    l_ledLayer->setStyleSheet("border: 1px solid #00FF00; background: #000;");
-    l_ledLayer->setAlignment(Qt::AlignCenter);
-
     leftLayout->addWidget(new QLabel("<b>【预览区】支持拖动缩放，点击画面布灯</b>"));
     leftLayout->addWidget(l_composite, 5); // 权重分配
-    leftLayout->addWidget(l_ledLayer, 1);
 
     // --- 中间：控制台 ---
     QVBoxLayout *ctrl = new QVBoxLayout;
@@ -54,7 +63,7 @@ void MainWindow::setupUI() {
     ctrl->addWidget(combo_surfaceFinish);
 
     combo_maskColor = new QComboBox();
-    combo_maskColor->addItems({"蓝色", "黑色", "红色", "白色"});
+    combo_maskColor->addItems({"蓝色", "黑色", "红色", "绿色", "白色"});
     connect(combo_maskColor, SIGNAL(currentIndexChanged(int)), this, SLOT(updateProcess()));
     ctrl->addWidget(new QLabel("阻焊颜色:"));
     ctrl->addWidget(combo_maskColor);
@@ -62,20 +71,29 @@ void MainWindow::setupUI() {
     s_gold   = createSlider("金色/银色判定", 0, 359, 45, ctrl);
     s_silk   = createSlider("丝印阈值", 0, 255, 180, ctrl);
     s_trans  = createSlider("基材透光阈值", 0, 255, 120, ctrl);
+    s_copperDepth = createSlider("敷铜层较深阈值", 0, 255, 150, ctrl);
     s_ledRad = createSlider("灯光散射半径", 20, 500, 150, ctrl);
+    s_ledIntensity = createSlider("灯光中心不透明度", 0, 255, 200, ctrl);
+    check_showLEDOverlay = new QCheckBox("在预览中叠加显示灯光与范围");
+    connect(check_showLEDOverlay, &QCheckBox::toggled, [=](bool){ updateProcess(); });
+    ctrl->addWidget(check_showLEDOverlay);
+
     s_autoSense = createSlider("自动布灯敏感度(0关)", 0, 10, 1, ctrl);
     check_edge = new QCheckBox("启用描边 (边缘增强)");
     ctrl->addWidget(check_edge);
 
-    s_edgeThresh = createSlider("边缘阈值", 0, 255, 50, ctrl);
+    s_edgeThresh = createSlider("边缘下限阈值", 0, 255, 50, ctrl);
+    s_edgeThreshMax = createSlider("边缘上限阈值", 0, 255, 200, ctrl); // 新增上限，默认值设高一些
     s_autoInvert = createSlider("自动反色范围", -1, 50, 10, ctrl);
 
     // 初始化状态控制：勾选才启用滑动条
     s_edgeThresh->setEnabled(false);
     s_autoInvert->setEnabled(false);
+    s_edgeThreshMax->setEnabled(false);
     connect(check_edge, &QCheckBox::toggled, [=](bool checked){
         s_edgeThresh->setEnabled(checked);
         s_autoInvert->setEnabled(checked);
+        s_edgeThreshMax->setEnabled(checked);
         updateProcess();
     });
 
@@ -121,324 +139,211 @@ void MainWindow::setupUI() {
     setCentralWidget(central);
     resize(1200, 800); // 初始窗口大小
 }
-QColor MainWindow::getSolderMaskColor() {
-    QString color = combo_maskColor->currentText();
-    if (color == "蓝色") return QColor(0, 50, 150, 200);
-    if (color == "红色") return QColor(150, 0, 0, 200);
-    if (color == "黑色") return QColor(10, 10, 10, 245);
-    return QColor(240, 240, 240, 220); // 白色
+
+QSlider* MainWindow::createSlider(QString title, int min, int max, int def, QVBoxLayout* layout) {
+    QLabel *lbl = new QLabel(QString("%1: %2").arg(title).arg(def));
+    QSlider* s = new QSlider(Qt::Horizontal);
+    s->setRange(min, max);
+    s->setValue(def);
+    layout->addWidget(lbl);
+    layout->addWidget(s);
+    connect(s, &QSlider::valueChanged, [=](int v){
+        lbl->setText(QString("%1: %2").arg(title).arg(v));
+        updateProcess();
+    });
+    return s;
 }
-QColor MainWindow::getSilkColor() {
-    return (combo_maskColor->currentText() == "白色") ? Qt::black : Qt::white;
-}
+
 void MainWindow::updateProcess() {
     if (m_origin.isNull()) return;
 
-    int w = m_origin.width();
-    int h = m_origin.height();
+    processedOrigin = m_origin;
 
+    // 应用边缘锐化
+    if (check_edge && check_edge->isChecked()) {
+        processedOrigin = m_edgeSharpener.processEdgeSharpening(
+            processedOrigin,
+            s_edgeThresh->value(),
+            s_edgeThreshMax->value(),
+            s_autoInvert->value()
+        );
+    }
 
-    processedOrigin = m_origin; // 默认使用原图
-        if (check_edge && check_edge->isChecked()) {
-            int eth = s_edgeThresh->value();
-            int invR = s_autoInvert->value();
-
-            for (int y = 1; y < h - 1; ++y) {
-                for (int x = 1; x < w - 1; ++x) {
-                    // 3x3 简单的拉普拉斯卷积核进行边缘检测
-                    int center = qGray(m_origin.pixel(x, y));
-                    int edgeVal = std::abs(4 * center - qGray(m_origin.pixel(x-1, y))
-                                                   - qGray(m_origin.pixel(x+1, y))
-                                                   - qGray(m_origin.pixel(x, y-1))
-                                           - qGray(m_origin.pixel(x, y+1)));
-
-                    if (edgeVal > eth) {
-                        int invR = s_autoInvert->value();
-                        QColor edgeColor;
-
-                        if (invR == -1) {
-                            // 值为 -1：强制全黑
-                            edgeColor = qRgb(0, 0, 0);
-                        }
-                        else if (invR == 0) {
-                            // 值为 0：强制全白
-                            edgeColor = qRgb(255, 255, 255);
-                        }
-                        else {
-                            // 值 > 0：执行原有的自动反色逻辑
-                            long long sumGray = 0;
-                            int count = 0;
-                            for(int dy = -invR; dy <= invR; ++dy) {
-                                for(int dx = -invR; dx <= invR; ++dx) {
-                                    int nx = x + dx, ny = y + dy;
-                                    if(nx >= 0 && nx < w && ny >= 0 && ny < h) {
-                                        sumGray += qGray(m_origin.pixel(nx, ny));
-                                        count++;
-                                    }
-                                }
-                            }
-                            int avg = sumGray / count;
-                            edgeColor = (avg > 128) ? qRgb(0, 0, 0) : qRgb(255, 255, 255);
-                        }
-
-                        processedOrigin.setPixel(x, y, edgeColor.rgb());
-                    }
-                }
-            }
-        }
-
-
-    // 1. 获取 UI 参数（缓存参数，避免在百万次循环中重复查询 UI 组件）
+    // 获取参数
     QString maskColorName = combo_maskColor->currentText();
-    QColor maskColor = getSolderMaskColor();
-    QColor silkColor = getSilkColor();
+    QString finishType = combo_surfaceFinish->currentText();
     bool isWhiteMask = (maskColorName == "白色");
-    bool isHASL = combo_surfaceFinish->currentText().contains("喷锡");
-    QColor metalRenderColor = isHASL ? QColor(200, 200, 215) : QColor(218, 165, 32);
 
     int goldThresh = s_gold->value();
     int silkThresh = s_silk->value();
     int transThresh = s_trans->value();
     int radVal = s_ledRad->value();
+    // Overlay switch is only for preview composition.
+    bool showOverlay = (check_showLEDOverlay && check_showLEDOverlay->isChecked());
 
-    // 2. 初始化图像
-    QImage imgCopper(w, h, QImage::Format_RGB32);
-    QImage imgMask(w, h, QImage::Format_RGB32);
-    QImage imgSilk(w, h, QImage::Format_RGB32);
-    QImage imgBottom(w, h, QImage::Format_RGB32);
-    QImage imgComp(w, h, QImage::Format_RGB32);
+    // 使用 ImageProcessor 处理图像
+    QImage imgCopper, imgMask, imgSilk, imgBottom, imgComp;
 
-    // 3. 高性能像素处理循环
-    for (int y = 0; y < h; ++y) {
-        // 使用行指针大幅提升像素写入速度
-        QRgb *lineCopper = (QRgb *)imgCopper.scanLine(y);
-        QRgb *lineMask   = (QRgb *)imgMask.scanLine(y);
-        QRgb *lineSilk   = (QRgb *)imgSilk.scanLine(y);
-        QRgb *lineBottom = (QRgb *)imgBottom.scanLine(y);
-        QRgb *lineComp   = (QRgb *)imgComp.scanLine(y);
-        const QRgb *lineOri = (const QRgb *)processedOrigin.constScanLine(y);
+    m_imageProcessor.processImage(
+        processedOrigin,
+        goldThresh,
+        silkThresh,
+        transThresh,
+        s_copperDepth->value(),
+        radVal,
+        maskColorName,
+        finishType,
+        isWhiteMask,
+        imgCopper,
+        imgMask,
+        imgSilk,
+        imgBottom,
+        imgComp,
+        m_ledStrips,
+        false // keep base composite clean; overlay is rendered by LEDLayoutEngine below
+    );
 
-        for (int x = 0; x < w; ++x) {
-            QColor col(lineOri[x]);
-            int gray = qGray(lineOri[x]);
+    // 生成生产层
+    m_layerGenerator.generateLayers(imgCopper, imgMask, imgSilk, imgBottom, m_layers);
 
-            // --- 物理层判定 ---
-            bool isMetal = false;
-            if (!isHASL) {
-                isMetal = (std::abs(col.hue() - goldThresh) < 25 && col.saturation() > 50 && col.value() > 70);
-            } else {
-                bool isSilverHue = (col.saturation() < 40 || (col.hue() > 160 && col.hue() < 260));
-                isMetal = isSilverHue && (col.value() > goldThresh);
-            }
-
-            bool silk = (gray > silkThresh) && !isMetal;
-            bool maskOpen = isMetal || (silk && !isWhiteMask);
-            bool bottomOpen = (gray > transThresh);
-
-            // 填充生产数据 (黑底白图)
-            lineCopper[x] = isMetal ? 0xFFFFFFFF : 0xFF000000;
-            lineMask[x]   = maskOpen ? 0xFFFFFFFF : 0xFF000000;
-            lineSilk[x]   = silk ? 0xFFFFFFFF : 0xFF000000;
-            lineBottom[x] = bottomOpen ? 0xFFFFFFFF : 0xFF000000;
-
-            // --- 效果预览渲染逻辑 ---
-            QColor pixelRes(40, 35, 25); // 基材色
-
-            if (bottomOpen) {
-                int rAcc = 0, gAcc = 0, bAcc = 0;
-                for (const auto& s : m_ledStrips) {
-                    // 性能优化：快速过滤掉距离过远的像素
-                    if (std::abs(x - s.end.x()) > radVal && std::abs(x - s.start.x()) > radVal) continue;
-
-                    float d = distanceToSegment(QPoint(x, y), s.start, s.end);
-                    if (d < radVal) {
-                        float factor = std::pow(1.0f - (d / radVal), 1.8f);
-                        rAcc += s.color.red() * factor;
-                        gAcc += s.color.green() * factor;
-                        bAcc += s.color.blue() * factor;
-                    }
-                }
-                if (rAcc + gAcc + bAcc > 10) {
-                    pixelRes = QColor(qMin(255, rAcc), qMin(255, gAcc), qMin(255, bAcc));
-                }
-            }
-
-            // 叠加油墨效果
-            if (!maskOpen) {
-                pixelRes.setRed((pixelRes.red() * 50 + maskColor.red() * 205) / 255);
-                pixelRes.setGreen((pixelRes.green() * 50 + maskColor.green() * 205) / 255);
-                pixelRes.setBlue((pixelRes.blue() * 50 + maskColor.blue() * 205) / 255);
-            }
-
-            // 叠加金属与丝印
-            if (isMetal) pixelRes = metalRenderColor;
-            else if (silk) pixelRes = silkColor;
-
-            lineComp[x] = pixelRes.rgb();
-        }
-    }
-
-    // 4. 在最终效果图上绘制虚线辅助圆 (仅供 UI 查看，不影响导出)
-    QPainter pComp(&imgComp);
-    pComp.setRenderHint(QPainter::Antialiasing);
-    QPen dashPen(QColor(255, 255, 255, 120), w / 300.0, Qt::DashLine);
-    for (const auto& s : m_ledStrips) {
-        pComp.setPen(dashPen);
-        pComp.drawEllipse(s.end, radVal, radVal);
-    }
-    pComp.end();
-
-    // 5. 绘制灯条预览图 (左下角方框)
-    QImage imgLED_Preview(w, h, QImage::Format_RGB32);
-    imgLED_Preview.fill(Qt::black);
-    QPainter pLED(&imgLED_Preview);
-    pLED.setRenderHint(QPainter::Antialiasing);
-    for (const auto& s : m_ledStrips) {
-        pLED.setPen(QPen(s.color, w / 60, Qt::SolidLine, Qt::RoundCap));
-        pLED.drawLine(s.start, s.end);
-
-        QPen ledDash(QColor(s.color.red(), s.color.green(), s.color.blue(), 180), w / 150.0, Qt::DashLine);
-        pLED.setPen(ledDash);
-        pLED.drawEllipse(s.end, radVal, radVal);
-    }
-    pLED.end();
-
-    // 6. 生成反色生产图并存入缓存 (解决导出为空的问题)
-    auto getInverted = [](const QImage& img) {
-        QImage inv = img.copy();
-        inv.invertPixels();
-        return inv;
-    };
-    m_layers["Top_Copper"]  = getInverted(imgCopper);
-    m_layers["Top_Mask"]    = getInverted(imgMask);
-    m_layers["Top_Silk"]    = getInverted(imgSilk);
-    m_layers["Bottom_Mask"] = getInverted(imgBottom);
-
-    // 7. 刷新 UI 界面显示
+    // 更新 UI 显示
     auto setScaled = [this](QLabel* label, const QImage& img) {
         if (img.isNull() || label->size().isEmpty()) return;
         label->setPixmap(QPixmap::fromImage(img).scaled(label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     };
 
-    setScaled(l_composite, imgComp);
-    setScaled(l_copper,    m_layers["Top_Copper"]);
-    setScaled(l_mask,      m_layers["Top_Mask"]);
-    setScaled(l_silk,      m_layers["Top_Silk"]);
-    setScaled(l_bottom,    m_layers["Bottom_Mask"]);
-    setScaled(l_ledLayer,  imgLED_Preview);
+    // 叠加灯光与范围（如果启用），并在渲染时尊重敷铜与底层透光遮挡规则
+    if (showOverlay) {
+        m_ledLayoutEngine.renderCompositeWithLEDs(
+            imgComp,
+            m_ledStrips,
+            s_ledRad->value(),
+            imgCopper,
+            imgBottom,
+            showOverlay,
+            s_ledIntensity->value(),
+            showOverlay
+        );
+    }
+    m_previewComposite = imgComp;
+    updateCompositePreview(m_previewComposite);
+    setScaled(l_copper, m_layers["Top_Copper"]);
+    setScaled(l_mask, m_layers["Top_Mask"]);
+    setScaled(l_silk, m_layers["Top_Silk"]);
+    setScaled(l_bottom, m_layers["Bottom_Mask"]);
+
+    // 独立的灯条预览widget已移除，灯光在主预览上叠加显示
 }
+
+void MainWindow::clampPreviewPan() {
+    if (m_previewComposite.isNull() || !l_composite || l_composite->size().isEmpty()) {
+        m_previewPan = QPointF(0, 0);
+        return;
+    }
+
+    const QSize labelSize = l_composite->size();
+    const QSize imgSize = m_previewComposite.size();
+    const QRectF r = calcPreviewRect(labelSize, imgSize, m_previewZoom, QPointF(0, 0));
+
+    const double maxPanX = qMax(0.0, (r.width() - labelSize.width()) * 0.5);
+    const double maxPanY = qMax(0.0, (r.height() - labelSize.height()) * 0.5);
+    m_previewPan.setX(qBound(-maxPanX, m_previewPan.x(), maxPanX));
+    m_previewPan.setY(qBound(-maxPanY, m_previewPan.y(), maxPanY));
+}
+
+void MainWindow::updateCompositePreview(const QImage& img) {
+    if (!l_composite || img.isNull() || l_composite->size().isEmpty()) return;
+
+    clampPreviewPan();
+    const QSize labelSize = l_composite->size();
+    const QRectF targetRect = calcPreviewRect(labelSize, img.size(), m_previewZoom, m_previewPan);
+
+    QPixmap canvas(labelSize);
+    canvas.fill(QColor(26, 26, 26));
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter.drawImage(targetRect, img);
+    painter.end();
+
+    l_composite->setPixmap(canvas);
+}
+
+bool MainWindow::mapLabelToImage(const QPoint& labelPos, QPoint& imgPos) const {
+    if (m_previewComposite.isNull() || !l_composite || l_composite->size().isEmpty()) return false;
+
+    const QRectF drawRect = calcPreviewRect(l_composite->size(), m_previewComposite.size(), m_previewZoom, m_previewPan);
+    if (!drawRect.contains(QPointF(labelPos))) return false;
+
+    const double nx = (labelPos.x() - drawRect.left()) / drawRect.width();
+    const double ny = (labelPos.y() - drawRect.top()) / drawRect.height();
+    const int x = qBound(0, static_cast<int>(std::floor(nx * m_previewComposite.width())), m_previewComposite.width() - 1);
+    const int y = qBound(0, static_cast<int>(std::floor(ny * m_previewComposite.height())), m_previewComposite.height() - 1);
+    imgPos = QPoint(x, y);
+    return true;
+}
+
 void MainWindow::autoSuggestLEDs() {
     if (processedOrigin.isNull()) return;
-    m_ledStrips.clear();
-
-    // 修复：必须先获取图片的宽高
-    int w = processedOrigin.width();
-    int h = processedOrigin.height();
 
     int targetCount = s_autoSense->value();
-    if (targetCount <= 0) { updateProcess(); return; }
-
-    // 定义色彩桶结构
-    struct ColorBucket {
-        QVector<QPoint> points;
-        long long totalBrightness = 0;
-    };
-    QMap<int, ColorBucket> buckets;
-
-    // 1. 采样：寻找彩色区域
-    for(int y = 0; y < h; y += 15) {
-        for(int x = 0; x < w; x += 15) {
-            QColor c = processedOrigin.pixelColor(x, y);
-            if (c.value() > 80) {
-                // 饱和度低判定为灰色区 (-1)，否则按色相分桶
-                int bucketIdx = (c.saturation() < 30) ? -1 : (c.hue() / 30);
-                buckets[bucketIdx].points.append(QPoint(x, y));
-                buckets[bucketIdx].totalBrightness += c.value();
-            }
-        }
+    if (targetCount <= 0) {
+        m_ledStrips.clear();
+        updateProcess();
+        return;
     }
 
-    // 2. 桶排序逻辑：修复迭代器访问
-    struct RankedBucket { int id; long long weight; };
-    QList<RankedBucket> ranked;
-    QMapIterator<int, ColorBucket> it(buckets);
-    while (it.hasNext()) {
-        it.next();
-        RankedBucket rb;
-        rb.id = it.key();
-        rb.weight = it.value().totalBrightness; // 修正点：使用 it.value()
-        ranked.append(rb);
-    }
+    m_ledStrips = m_ledLayoutEngine.autoSuggestLEDs(
+        processedOrigin,
+        targetCount,
+        s_ledRad->value()
+    );
 
-    std::sort(ranked.begin(), ranked.end(), [](const RankedBucket& a, const RankedBucket& b){
-        return a.weight > b.weight;
-    });
-
-    // 3. 按颜色重要性布灯
-    int added = 0;
-    for(const auto& rb : ranked) {
-        if (added >= targetCount) break;
-
-        QPoint bestPos;
-        int maxV = -1;
-        QColor bestCol = Qt::white;
-
-        for(const QPoint& p : buckets[rb.id].points) {
-            QColor c = processedOrigin.pixelColor(p.x(), p.y());
-            if (c.value() > maxV) {
-                // 简单的间距检查
-                bool tooClose = false;
-                for(const auto& s : m_ledStrips) {
-                    if (QPoint(p - s.end).manhattanLength() < 60) { tooClose = true; break; }
-                }
-                if (!tooClose) {
-                    maxV = c.value();
-                    bestPos = p;
-                    bestCol = c;
-                }
-            }
-        }
-
-        if (maxV != -1) {
-            LEDStrip s;
-            s.start = QPoint(bestPos.x(), bestPos.y() - 25);
-            s.end = QPoint(bestPos.x(), bestPos.y() + 25);
-            s.radius = s_ledRad->value();
-            s.color = bestCol; // 核心：这里确保了颜色是彩色
-            m_ledStrips.append(s);
-            added++;
-        }
-    }
     updateProcess();
 }
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
     if (obj == l_composite && !processedOrigin.isNull()) {
+        if (event->type() == QEvent::Wheel) {
+            QWheelEvent *we = static_cast<QWheelEvent*>(event);
+            const int delta = we->angleDelta().y();
+            if (delta == 0 || m_previewComposite.isNull()) return true;
+
+            const double factor = std::pow(1.12, delta / 120.0);
+            const double oldZoom = m_previewZoom;
+            const double newZoom = qBound(0.2, oldZoom * factor, 8.0);
+            if (std::abs(newZoom - oldZoom) < 1e-6) return true;
+
+            const QPoint cursorPos = we->pos();
+            const QRectF oldRect = calcPreviewRect(l_composite->size(), m_previewComposite.size(), oldZoom, m_previewPan);
+
+            m_previewZoom = newZoom;
+
+            if (oldRect.contains(QPointF(cursorPos))) {
+                const double u = (cursorPos.x() - oldRect.left()) / oldRect.width();
+                const double v = (cursorPos.y() - oldRect.top()) / oldRect.height();
+                const QRectF newRect = calcPreviewRect(l_composite->size(), m_previewComposite.size(), m_previewZoom, m_previewPan);
+                const QPointF mapped(newRect.left() + u * newRect.width(), newRect.top() + v * newRect.height());
+                m_previewPan += QPointF(cursorPos.x() - mapped.x(), cursorPos.y() - mapped.y());
+            }
+
+            clampPreviewPan();
+            updateCompositePreview(m_previewComposite);
+            return true;
+        }
+
         if (event->type() == QEvent::MouseButtonPress) {
             QMouseEvent *me = static_cast<QMouseEvent*>(event);
+
+            if (me->button() == Qt::MiddleButton || me->button() == Qt::RightButton) {
+                m_isPanningPreview = true;
+                m_lastPanPos = me->pos();
+                l_composite->setCursor(Qt::ClosedHandCursor);
+                return true;
+            }
+
             if (me->button() == Qt::LeftButton) {
-
-                // --- 计算坐标映射 (Label像素 -> 原始图片像素) ---
-                // 1. 获取图片在Label中缩放后的实际尺寸和偏移
-                QSize labelSize = l_composite->size();
-                QSize pixmapSize = l_composite->pixmap()->size();
-
-                int offsetX = (labelSize.width() - pixmapSize.width()) / 2;
-                int offsetY = (labelSize.height() - pixmapSize.height()) / 2;
-
-                // 2. 检查点击是否在有效图片区域内
-                int clickX = me->x() - offsetX;
-                int clickY = me->y() - offsetY;
-
-                if (clickX >= 0 && clickX < pixmapSize.width() &&
-                    clickY >= 0 && clickY < pixmapSize.height()) {
-
-                    // 3. 映射到原始图片比例 (0.0 ~ 1.0)
-                    float rx = (float)clickX / pixmapSize.width();
-                    float ry = (float)clickY / pixmapSize.height();
-
-                    // 4. 存储为原始图片坐标（用于算法计算）
-                    QPoint imgPos(rx * processedOrigin.width(), ry * processedOrigin.height());
-
+                QPoint imgPos;
+                if (mapLabelToImage(me->pos(), imgPos)) {
                     if (!m_isPlacing) {
                         m_pendingStart = imgPos;
                         m_isPlacing = true;
@@ -447,9 +352,8 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                         s.start = m_pendingStart;
                         s.end = imgPos;
                         s.radius = s_ledRad->value();
-                        // 智能颜色提取：取终点像素色作为灯条色
                         s.color = processedOrigin.pixelColor(imgPos.x(), imgPos.y());
-                        if (s.color.value() < 50) s.color = Qt::white; // 太暗则默认白光
+                        if (s.color.value() < 50) s.color = Qt::white;
 
                         m_ledStrips.append(s);
                         m_isPlacing = false;
@@ -459,20 +363,27 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                 return true;
             }
         }
+
+        if (event->type() == QEvent::MouseMove && m_isPanningPreview) {
+            QMouseEvent *me = static_cast<QMouseEvent*>(event);
+            const QPoint delta = me->pos() - m_lastPanPos;
+            m_lastPanPos = me->pos();
+            m_previewPan += QPointF(delta.x(), delta.y());
+            clampPreviewPan();
+            updateCompositePreview(m_previewComposite);
+            return true;
+        }
+
+        if (event->type() == QEvent::MouseButtonRelease) {
+            QMouseEvent *me = static_cast<QMouseEvent*>(event);
+            if ((me->button() == Qt::MiddleButton || me->button() == Qt::RightButton) && m_isPanningPreview) {
+                m_isPanningPreview = false;
+                l_composite->unsetCursor();
+                return true;
+            }
+        }
     }
     return QMainWindow::eventFilter(obj, event);
-}
-// --- 辅助函数：创建滑动条 ---
-QSlider* MainWindow::createSlider(QString title, int min, int max, int def, QVBoxLayout* layout) {
-    QLabel *lbl = new QLabel(QString("%1: %2").arg(title).arg(def));
-    QSlider* s = new QSlider(Qt::Horizontal);
-    s->setRange(min, max); s->setValue(def);
-    layout->addWidget(lbl); layout->addWidget(s);
-    connect(s, &QSlider::valueChanged, [=](int v){
-        lbl->setText(QString("%1: %2").arg(title).arg(v));
-        updateProcess();
-    });
-    return s;
 }
 
 // --- 加载与导出 ---
@@ -480,7 +391,11 @@ void MainWindow::loadAndProcess() {
     QString f = QFileDialog::getOpenFileName(this, "选择图片", "", "Images (*.png *.jpg)");
     if (f.isEmpty()) return;
     m_origin = QImage(f).convertToFormat(QImage::Format_RGB32);
+    m_previewZoom = 1.0;
+    m_previewPan = QPointF(0, 0);
+    m_isPanningPreview = false;
     btn_export->setEnabled(true);
+    m_ledStrips.clear();
     updateProcess();
 }
 
@@ -489,42 +404,17 @@ void MainWindow::exportLayers() {
     QString d = QFileDialog::getExistingDirectory(this, "选择导出目录");
     if (d.isEmpty()) return;
 
-    int w = processedOrigin.width();
-    int h = processedOrigin.height();
     QString finishName = (combo_surfaceFinish->currentText().contains("沉金")) ? "ENIG" : "HASL";
 
-    // 1. 导出四个生产层 (反色 1-bit)
-    QMapIterator<QString, QImage> i(m_layers);
-    while (i.hasNext()) {
-        i.next();
-        // 转换为单色位图
-        QImage exp = i.value().convertToFormat(QImage::Format_Mono);
+    bool success = m_layerGenerator.exportLayersToFiles(m_layers, d, finishName, m_ledStrips);
 
-        // 傻逼EDA锚点补丁
-        exp.setPixel(0, 0, 1);
-        exp.setPixel(0, 1, 0);
-        exp.setPixel(1, 0, 0);
-
-        QString path = QString("%1/%2_%3_Inverted.png").arg(d).arg(i.key()).arg(finishName);
-        exp.save(path);
+    if (success) {
+        QMessageBox::information(this, "导出成功", "图纸已导出，灯条参考图为透明底色。");
+    } else {
+        QMessageBox::warning(this, "导出失败", "导出过程中发生错误，请检查目录权限。");
     }
-
-    // 2. 导出灯条参考层 (透明底色 RGBA)
-    QImage imgLED_Export(w, h, QImage::Format_ARGB32);
-    imgLED_Export.fill(Qt::transparent); // 设置底色透明
-
-    QPainter painter(&imgLED_Export);
-    painter.setRenderHint(QPainter::Antialiasing);
-    for (const auto& s : m_ledStrips) {
-        painter.setPen(QPen(s.color, w / 60, Qt::SolidLine, Qt::RoundCap));
-        painter.drawLine(s.start, s.end);
-    }
-    painter.end();
-
-    imgLED_Export.save(d + "/LED_Placement_Reference.png");
-
-    QMessageBox::information(this, "导出成功", "图纸已导出，灯条参考图为透明底色。");
 }
+
 float MainWindow::distanceToSegment(QPoint p, QPoint v, QPoint w) {
     float l2 = std::pow(v.x()-w.x(), 2) + std::pow(v.y()-w.y(), 2);
     if (l2 == 0.0) return std::sqrt(std::pow(p.x()-v.x(), 2) + std::pow(p.y()-v.y(), 2));
@@ -534,7 +424,10 @@ float MainWindow::distanceToSegment(QPoint p, QPoint v, QPoint w) {
 }
 void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
-    if (!processedOrigin.isNull()) {
+    if (!m_previewComposite.isNull()) {
+        clampPreviewPan();
+        updateCompositePreview(m_previewComposite);
+    } else if (!processedOrigin.isNull()) {
         updateProcess();
     }
 }

@@ -12,13 +12,10 @@
 #include <QComboBox>
 #include <QPainter>
 #include <QCheckBox>
-
-struct LEDStrip {
-    QPoint start;
-    QPoint end;
-    int radius;
-    QColor color; // 存储检测到的智能颜色
-};
+#include "imageprocessor.h"
+#include "edgesharpener.h"
+#include "ledlayoutengine.h"
+#include "layergenerator.h"
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -29,6 +26,7 @@ public:
     bool eventFilter(QObject *obj, QEvent *event) override;
 protected:
     void resizeEvent(QResizeEvent *event) override;
+
 private slots:
     void loadAndProcess();
     void updateProcess();
@@ -39,30 +37,41 @@ private:
     void setupUI();
     QSlider* createSlider(QString title, int min, int max, int def, class QVBoxLayout* layout);
     float distanceToSegment(QPoint p, QPoint v, QPoint w);
+    void updateCompositePreview(const QImage& img);
+    bool mapLabelToImage(const QPoint& labelPos, QPoint& imgPos) const;
+    void clampPreviewPan();
 
     QImage m_origin;
     QMap<QString, QImage> m_layers;
     QVector<LEDStrip> m_ledStrips;
+    QImage processedOrigin;
+    QImage m_previewComposite;
 
     QPoint m_pendingStart;
     bool m_isPlacing = false;
-    QSlider *s_autoSense;
-    void updatePreviewOnly(); // 新增：仅刷新预览，不重算布灯
+    bool m_isPanningPreview = false;
+    QPoint m_lastPanPos;
+    QPointF m_previewPan;
+    double m_previewZoom = 1.0;
 
     // UI 组件
-    QLabel *l_copper, *l_mask, *l_silk, *l_bottom, *l_composite, *l_ledLayer;
+    QLabel *l_copper, *l_mask, *l_silk, *l_bottom, *l_composite;
     QSlider *s_silk, *s_gold, *s_trans, *s_ledRad;
     QComboBox *combo_maskColor; // 阻焊颜色选择
     QPushButton *btn_export;
     QComboBox *combo_surfaceFinish; // 表面处理：沉金 / 喷锡
-    //QSlider *s_autoSense;
     QCheckBox *check_edge;
-    QSlider *s_edgeThresh, *s_autoInvert;
-    QImage processedOrigin;
+    QSlider *s_edgeThresh, *s_autoInvert, *s_edgeThreshMax;
+    QSlider *s_autoSense;
+    QSlider *s_copperDepth; // 敷铜层较深阈值
+    QSlider *s_ledIntensity; // 灯光中心不透明度控制 (0-255)
+    QCheckBox *check_showLEDOverlay; // 在主预览上叠加显示灯光与范围
 
-    // 物理参数
-    QColor getSolderMaskColor();
-    QColor getSilkColor();
+    // 子模块实例
+    ImageProcessor m_imageProcessor;
+    EdgeSharpener m_edgeSharpener;
+    LEDLayoutEngine m_ledLayoutEngine;
+    LayerGenerator m_layerGenerator;
 };
 
 #endif

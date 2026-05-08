@@ -25,10 +25,19 @@ DEFINES += QT_DEPRECATED_WARNINGS
 
 SOURCES += \
         main.cpp \
-        mainwindow.cpp
+        mainwindow.cpp \
+        imageprocessor.cpp \
+        edgesharpener.cpp \
+        ledlayoutengine.cpp \
+        layergenerator.cpp
 
 HEADERS += \
-        mainwindow.h
+        mainwindow.h \
+        imageprocessor.h \
+        edgesharpener.h \
+        ledlayoutengine.h \
+        layergenerator.h \
+        ledstrip.h
 
 FORMS += \
         mainwindow.ui
