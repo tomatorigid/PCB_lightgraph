@@ -2,7 +2,7 @@
 PCB_lightgraph is a specialized CAD utility that converts illustrations into multi-layered PCB manufacturing files (Copper, Mask, Silk, Bottom-Mask). It features real-time light-scattering simulation and intelligent multi-color LED placement for creating light-guided PCB artwork.
 
 
-
+[![GitHub Downloads](https://img.shields.io/github/downloads/tomatorigid/PCB_lightgraph/total.svg)](https://github.com/tomatorigid/PCB_lightgraph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Qt](https://img.shields.io/badge/Framework-Qt%205.x-blue.svg)](https://www.qt.io/)
 
