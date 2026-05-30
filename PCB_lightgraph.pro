@@ -28,6 +28,8 @@ SOURCES += \
         mainwindow.cpp \
         imageprocessor.cpp \
         edgesharpener.cpp \
+        gaussian_blur.cpp \
+        dp_simplify.cpp \
         ledlayoutengine.cpp \
         layergenerator.cpp
 
@@ -35,6 +37,8 @@ HEADERS += \
         mainwindow.h \
         imageprocessor.h \
         edgesharpener.h \
+        gaussian_blur.h \
+        dp_simplify.h \
         ledlayoutengine.h \
         layergenerator.h \
         ledstrip.h

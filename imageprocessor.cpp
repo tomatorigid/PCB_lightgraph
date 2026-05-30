@@ -11,6 +11,16 @@ static QColor blendColor(const QColor& base, const QColor& top, int topWeight255
         (base.green() * baseWeight255 + top.green() * topWeight255) / 255,
         (base.blue() * baseWeight255 + top.blue() * topWeight255) / 255);
 }
+
+static int colorSimilarityPercent(const QColor& a, const QColor& b) {
+    const int dr = a.red() - b.red();
+    const int dg = a.green() - b.green();
+    const int db = a.blue() - b.blue();
+    const double dist = std::sqrt(static_cast<double>(dr * dr + dg * dg + db * db));
+    const double maxDist = std::sqrt(3.0 * 255.0 * 255.0);
+    const double similarity = (1.0 - dist / maxDist) * 100.0;
+    return qBound(0, static_cast<int>(std::round(similarity)), 100);
+}
 }
 
 
@@ -35,6 +45,10 @@ QColor ImageProcessor::getSilkColor(const QString& maskColorName) {
 QColor ImageProcessor::getMetalRenderColor(const QString& finishType) {
     bool isHASL = finishType.contains("喷锡");
     return isHASL ? QColor(200, 200, 215) : QColor(218, 165, 32);
+}
+
+QColor ImageProcessor::getBareSubstrateColor() {
+    return QColor(QStringLiteral("#A07D40"));
 }
 
 bool ImageProcessor::isMetal(
@@ -64,7 +78,12 @@ bool ImageProcessor::isBaseCacheValid(
     int copperUnderMaskThresh,
     const QString& maskColorName,
     const QString& finishType,
-    bool isWhiteMask) const {
+    bool isWhiteMask,
+    bool enableBareSubstrate,
+    bool bareSubstrateUseGrayBinding,
+    int bareSubstrateGrayMinPct,
+    int bareSubstrateGrayMaxPct,
+    int bareSubstrateColorSimilarityPct) const {
 
     return !srcImage.isNull()
         && srcImage.cacheKey() == m_cachedSourceKey
@@ -74,7 +93,12 @@ bool ImageProcessor::isBaseCacheValid(
         && copperUnderMaskThresh == m_cachedCopperUnderMaskThresh
         && maskColorName == m_cachedMaskColorName
         && finishType == m_cachedFinishType
-        && isWhiteMask == m_cachedIsWhiteMask;
+        && isWhiteMask == m_cachedIsWhiteMask
+        && enableBareSubstrate == m_cachedEnableBareSubstrate
+        && bareSubstrateUseGrayBinding == m_cachedBareSubstrateUseGrayBinding
+        && bareSubstrateGrayMinPct == m_cachedBareSubstrateGrayMinPct
+        && bareSubstrateGrayMaxPct == m_cachedBareSubstrateGrayMaxPct
+        && bareSubstrateColorSimilarityPct == m_cachedBareSubstrateColorSimilarityPct;
 }
 
 void ImageProcessor::storeBaseCache(
@@ -86,6 +110,11 @@ void ImageProcessor::storeBaseCache(
     const QString& maskColorName,
     const QString& finishType,
     bool isWhiteMask,
+    bool enableBareSubstrate,
+    bool bareSubstrateUseGrayBinding,
+    int bareSubstrateGrayMinPct,
+    int bareSubstrateGrayMaxPct,
+    int bareSubstrateColorSimilarityPct,
     const QImage& outCopper,
     const QImage& outMask,
     const QImage& outSilk,
@@ -100,6 +129,11 @@ void ImageProcessor::storeBaseCache(
     m_cachedMaskColorName = maskColorName;
     m_cachedFinishType = finishType;
     m_cachedIsWhiteMask = isWhiteMask;
+    m_cachedEnableBareSubstrate = enableBareSubstrate;
+    m_cachedBareSubstrateUseGrayBinding = bareSubstrateUseGrayBinding;
+    m_cachedBareSubstrateGrayMinPct = bareSubstrateGrayMinPct;
+    m_cachedBareSubstrateGrayMaxPct = bareSubstrateGrayMaxPct;
+    m_cachedBareSubstrateColorSimilarityPct = bareSubstrateColorSimilarityPct;
 
     m_cachedCopper = outCopper;
     m_cachedMask = outMask;
@@ -117,6 +151,11 @@ void ImageProcessor::buildBaseLayers(
     const QString& maskColorName,
     const QString& finishType,
     bool isWhiteMask,
+    bool enableBareSubstrate,
+    bool bareSubstrateUseGrayBinding,
+    int bareSubstrateGrayMinPct,
+    int bareSubstrateGrayMaxPct,
+    int bareSubstrateColorSimilarityPct,
     QImage& outCopper,
     QImage& outMask,
     QImage& outSilk,
@@ -130,6 +169,11 @@ void ImageProcessor::buildBaseLayers(
     QColor silkColor = getSilkColor(maskColorName);
     bool isHASL = finishType.contains("喷锡");
     QColor metalRenderColor = getMetalRenderColor(finishType);
+    QColor bareSubstrateColor = getBareSubstrateColor();
+
+    const int grayMinPct = qBound(0, qMin(bareSubstrateGrayMinPct, bareSubstrateGrayMaxPct), 100);
+    const int grayMaxPct = qBound(0, qMax(bareSubstrateGrayMinPct, bareSubstrateGrayMaxPct), 100);
+    const int similarityThreshold = qBound(0, bareSubstrateColorSimilarityPct, 100);
 
     int effectiveCopperThresh = qBound(qMax(0, qMin(transThresh + 1, 254)), copperUnderMaskThresh, 254);
 
@@ -150,12 +194,22 @@ void ImageProcessor::buildBaseLayers(
         for (int x = 0; x < w; ++x) {
             QColor col(lineSrc[x]);
             int gray = qGray(lineSrc[x]);
+            int grayPct = qRound(gray * 100.0 / 255.0);
 
             bool isMetalPixel = isMetal(col, isHASL, goldThresh);
             bool silk = (gray > silkThresh) && !isMetalPixel;
             bool copperUnderMask = !isMetalPixel && !silk && (gray > effectiveCopperThresh);
             bool bottomOpen = (gray > transThresh);
             bool maskOpen = isMetalPixel || (silk && !isWhiteMask);
+            bool bareSubstratePixel = false;
+
+            if (enableBareSubstrate && !isMetalPixel) {
+                if (bareSubstrateUseGrayBinding) {
+                    bareSubstratePixel = (grayPct >= grayMinPct && grayPct <= grayMaxPct);
+                } else {
+                    bareSubstratePixel = (colorSimilarityPercent(col, bareSubstrateColor) >= similarityThreshold);
+                }
+            }
 
             lineCopper[x] = (isMetalPixel || copperUnderMask) ? 0xFFFFFFFF : 0xFF000000;
             lineMask[x] = maskOpen ? 0xFFFFFFFF : 0xFF000000;
@@ -164,15 +218,19 @@ void ImageProcessor::buildBaseLayers(
 
             QColor pixelRes(40, 35, 25);
 
-            if (!maskOpen) {
-                QColor appliedMask = copperUnderMask ? maskColor.lighter(135) : maskColor;
-                pixelRes = blendColor(pixelRes, appliedMask, copperUnderMask ? 170 : 205);
-            }
-
             if (isMetalPixel) {
                 pixelRes = metalRenderColor;
-            } else if (silk) {
-                pixelRes = silkColor;
+            } else if (bareSubstratePixel) {
+                pixelRes = bareSubstrateColor;
+            } else {
+                if (!maskOpen) {
+                    QColor appliedMask = copperUnderMask ? maskColor.lighter(135) : maskColor;
+                    pixelRes = blendColor(pixelRes, appliedMask, copperUnderMask ? 170 : 205);
+                }
+
+                if (silk) {
+                    pixelRes = silkColor;
+                }
             }
 
             lineComp[x] = pixelRes.rgb();
@@ -246,6 +304,11 @@ void ImageProcessor::processImage(
     const QString& maskColorName,
     const QString& finishType,
     bool isWhiteMask,
+    bool enableBareSubstrate,
+    bool bareSubstrateUseGrayBinding,
+    int bareSubstrateGrayMinPct,
+    int bareSubstrateGrayMaxPct,
+    int bareSubstrateColorSimilarityPct,
     QImage& outCopper,
     QImage& outMask,
     QImage& outSilk,
@@ -262,7 +325,8 @@ void ImageProcessor::processImage(
         return;
     }
 
-    if (!isBaseCacheValid(srcImage, goldThresh, silkThresh, transThresh, copperUnderMaskThresh, maskColorName, finishType, isWhiteMask)) {
+    if (!isBaseCacheValid(srcImage, goldThresh, silkThresh, transThresh, copperUnderMaskThresh, maskColorName, finishType, isWhiteMask,
+                          enableBareSubstrate, bareSubstrateUseGrayBinding, bareSubstrateGrayMinPct, bareSubstrateGrayMaxPct, bareSubstrateColorSimilarityPct)) {
         buildBaseLayers(
             srcImage,
             goldThresh,
@@ -272,6 +336,11 @@ void ImageProcessor::processImage(
             maskColorName,
             finishType,
             isWhiteMask,
+            enableBareSubstrate,
+            bareSubstrateUseGrayBinding,
+            bareSubstrateGrayMinPct,
+            bareSubstrateGrayMaxPct,
+            bareSubstrateColorSimilarityPct,
             outCopper,
             outMask,
             outSilk,
@@ -287,6 +356,11 @@ void ImageProcessor::processImage(
             maskColorName,
             finishType,
             isWhiteMask,
+            enableBareSubstrate,
+            bareSubstrateUseGrayBinding,
+            bareSubstrateGrayMinPct,
+            bareSubstrateGrayMaxPct,
+            bareSubstrateColorSimilarityPct,
             outCopper,
             outMask,
             outSilk,

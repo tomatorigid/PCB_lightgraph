@@ -30,6 +30,11 @@ public:
         const QString& maskColorName,
         const QString& finishType,
         bool isWhiteMask,
+        bool enableBareSubstrate,
+        bool bareSubstrateUseGrayBinding,
+        int bareSubstrateGrayMinPct,
+        int bareSubstrateGrayMaxPct,
+        int bareSubstrateColorSimilarityPct,
         QImage& outCopper,
         QImage& outMask,
         QImage& outSilk,
@@ -65,6 +70,11 @@ public:
      */
     static QColor getMetalRenderColor(const QString& finishType);
 
+    /**
+     * @brief 获取裸露基材的默认显示色
+     */
+    static QColor getBareSubstrateColor();
+
 private:
     void renderLEDOverlay(
         QImage& composite,
@@ -81,6 +91,11 @@ private:
         const QString& maskColorName,
         const QString& finishType,
         bool isWhiteMask,
+        bool enableBareSubstrate,
+        bool bareSubstrateUseGrayBinding,
+        int bareSubstrateGrayMinPct,
+        int bareSubstrateGrayMaxPct,
+        int bareSubstrateColorSimilarityPct,
         QImage& outCopper,
         QImage& outMask,
         QImage& outSilk,
@@ -95,7 +110,12 @@ private:
         int copperUnderMaskThresh,
         const QString& maskColorName,
         const QString& finishType,
-        bool isWhiteMask) const;
+        bool isWhiteMask,
+        bool enableBareSubstrate,
+        bool bareSubstrateUseGrayBinding,
+        int bareSubstrateGrayMinPct,
+        int bareSubstrateGrayMaxPct,
+        int bareSubstrateColorSimilarityPct) const;
 
     void storeBaseCache(
         const QImage& srcImage,
@@ -106,6 +126,11 @@ private:
         const QString& maskColorName,
         const QString& finishType,
         bool isWhiteMask,
+        bool enableBareSubstrate,
+        bool bareSubstrateUseGrayBinding,
+        int bareSubstrateGrayMinPct,
+        int bareSubstrateGrayMaxPct,
+        int bareSubstrateColorSimilarityPct,
         const QImage& outCopper,
         const QImage& outMask,
         const QImage& outSilk,
@@ -121,6 +146,11 @@ private:
     QString m_cachedMaskColorName;
     QString m_cachedFinishType;
     bool m_cachedIsWhiteMask = false;
+    bool m_cachedEnableBareSubstrate = false;
+    bool m_cachedBareSubstrateUseGrayBinding = false;
+    int m_cachedBareSubstrateGrayMinPct = -1;
+    int m_cachedBareSubstrateGrayMaxPct = -1;
+    int m_cachedBareSubstrateColorSimilarityPct = -1;
 
     QImage m_cachedCopper;
     QImage m_cachedMask;
