@@ -1,4 +1,4 @@
-# PCB_lightgraph 项目报告书 | Project Report
+# PCB_lightgraph
 
 [![GitHub Downloads](https://img.shields.io/github/downloads/tomatorigid/PCB_lightgraph/total.svg)](https://github.com/tomatorigid/PCB_lightgraph/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -56,11 +56,9 @@
 
 ### 4) 工程保存/导入 | Project Save/Load
 - 支持 `*.pcblg` 工程包
-- 打包内容包含图像与参数快照（`args.json`）
 
 ### 5) 实时外部编辑联动 | External Live Editing
 - 菜单 `File -> 画图实时编辑`
-- 调起 Windows 画图，保存后自动检测并重载 temp 图像
 
 ---
 
@@ -111,23 +109,6 @@
 
 ---
 
-## 新版更新报告（重点）| Major Update Report
-
-以下为本轮版本重点更新（对应开发记录）：
-
-1. **新增两种判定直接开窗和相关算法，颜色扩展到 5 种**
-2. **边缘计算缓存机制大幅优化，速度明显提升**
-3. **兼容格式冲突图片，修复错误编码图片无法打开问题**
-4. **新增高斯预滤波（可开关）用于边缘降噪**
-5. **新增 Douglas-Peucker 抽稀（实验性）**
-6. **通过 Canny 算子实现高质量描边**
-7. **修复大图导入崩溃问题（作者环境验证）**
-8. **新增图像编辑联动（Windows 画图实时编辑）**
-9. **新增工程文件导入导出（`pcblg`）**
-10. **优化主界面布局与选项组织，交互更清晰**
-
----
-
 ## 界面与交互流程 | UI and Workflow
 
 ### 主界面区块
@@ -150,25 +131,6 @@
 
 ---
 
-## 工程文件（PCBLG）规范 | PCBLG Project Format
-
-`pcblg` 本质为 zip 打包格式（扩展名改为 `.pcblg`），主要包含：
-
-- 当前图像文件（temp 中工作图）
-- `args.json`（参数快照，含控件状态、实验性参数、LED 数据等）
-
-### 导入流程
-1. 选择 `*.pcblg`
-2. 解包到临时区域
-3. 恢复图像和参数
-4. 自动刷新预览
-
-### 导出流程
-1. 同步当前参数到 `args.json`
-2. 打包图像 + JSON
-3. 输出 `*.pcblg`
-
----
 
 ## 使用指南 | Usage Guide
 
@@ -193,23 +155,6 @@
 2. 选择对应 Kit（如 Desktop Qt 5.9 MinGW）
 3. 构建并运行
 
----
-
-## 项目结构 | Project Structure
-
-```text
-PCB_lightgraph/
-  main.cpp
-  mainwindow.cpp / mainwindow.h
-  imageprocessor.cpp / imageprocessor.h
-  edgesharpener.cpp / edgesharpener.h
-  gaussian_blur.cpp / gaussian_blur.h
-  dp_simplify.cpp / dp_simplify.h
-  ledlayoutengine.cpp / ledlayoutengine.h
-  layergenerator.cpp / layergenerator.h
-  ledstrip.h
-  PCB_lightgraph.pro
-```
 
 ---
 
