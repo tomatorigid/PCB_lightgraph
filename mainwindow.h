@@ -24,6 +24,13 @@ class QTimer;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
+    struct PreviewState {
+        double zoom = 1.0;
+        QPointF pan = QPointF(0, 0);
+        bool isPanning = false;
+        QPoint lastPanPos;
+    };
+
 public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
@@ -47,8 +54,11 @@ private:
     QSlider* createSlider(QString title, int min, int max, int def, class QVBoxLayout* layout);
     float distanceToSegment(QPoint p, QPoint v, QPoint w);
     void updateCompositePreview(const QImage& img);
+    void updateLayerPreview(QLabel* label, const QImage& img, PreviewState& state);
     bool mapLabelToImage(const QPoint& labelPos, QPoint& imgPos) const;
     void clampPreviewPan();
+    void clampPreviewPan(QLabel* label, const QImage& img, PreviewState& state);
+    bool handleLayerPreviewEvent(QLabel* label, QEvent* event, const QImage& img, PreviewState& state);
     void initTempWorkspace();
     void cleanupTempImages(const QString& keepImagePath = QString());
     bool loadImageFromPath(const QString& filePath, bool alreadyInTemp = false);
@@ -71,6 +81,9 @@ private:
     QPoint m_lastPanPos;
     QPointF m_previewPan;
     double m_previewZoom = 1.0;
+
+    QMap<QLabel*, QString> m_layerPreviewKeys;
+    QMap<QLabel*, PreviewState> m_layerPreviewStates;
 
     // UI 组件
     QLabel *l_copper, *l_mask, *l_silk, *l_bottom, *l_composite;

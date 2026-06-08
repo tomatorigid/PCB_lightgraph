@@ -199,8 +199,6 @@ void ImageProcessor::buildBaseLayers(
             bool isMetalPixel = isMetal(col, isHASL, goldThresh);
             bool silk = (gray > silkThresh) && !isMetalPixel;
             bool copperUnderMask = !isMetalPixel && !silk && (gray > effectiveCopperThresh);
-            bool bottomOpen = (gray > transThresh);
-            bool maskOpen = isMetalPixel || (silk && !isWhiteMask);
             bool bareSubstratePixel = false;
 
             if (enableBareSubstrate && !isMetalPixel) {
@@ -211,9 +209,13 @@ void ImageProcessor::buildBaseLayers(
                 }
             }
 
+            // 裸露基材只作用于对应位置的丝印层剔除，不影响阻焊层本身。
+            bool bottomOpen = (gray > transThresh);
+            bool maskOpen = isMetalPixel || (silk && !isWhiteMask);
+
             lineCopper[x] = (isMetalPixel || copperUnderMask) ? 0xFFFFFFFF : 0xFF000000;
             lineMask[x] = maskOpen ? 0xFFFFFFFF : 0xFF000000;
-            lineSilk[x] = silk ? 0xFFFFFFFF : 0xFF000000;
+            lineSilk[x] = (silk && !bareSubstratePixel) ? 0xFFFFFFFF : 0xFF000000;
             lineBottom[x] = bottomOpen ? 0xFFFFFFFF : 0xFF000000;
 
             QColor pixelRes(40, 35, 25);

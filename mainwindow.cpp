@@ -118,7 +118,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_tempReloadTimer, &QTimer::timeout, this, &MainWindow::checkTempImageUpdated);
     m_tempReloadTimer->start(1200);
 
-    setWindowTitle("PCB 透光画拆分工具v1.2.0 https://github.com/tomatorigid/PCB_lightgraph");
+    setWindowTitle("PCB 透光画拆分工具v1.3.1 https://github.com/tomatorigid/PCB_lightgraph");
 }
 
 MainWindow::~MainWindow() {
@@ -348,6 +348,15 @@ void MainWindow::setupUI() {
     rightGrid->addLayout(createSubLabel("Top Silk (丝印)", l_silk), 1, 0);
     rightGrid->addLayout(createSubLabel("Bottom Mask (透光)", l_bottom), 1, 1);
 
+    m_layerPreviewKeys[l_copper] = "Top_Copper";
+    m_layerPreviewKeys[l_mask] = "Top_Mask";
+    m_layerPreviewKeys[l_silk] = "Top_Silk";
+    m_layerPreviewKeys[l_bottom] = "Bottom_Mask";
+    l_copper->installEventFilter(this);
+    l_mask->installEventFilter(this);
+    l_silk->installEventFilter(this);
+    l_bottom->installEventFilter(this);
+
     mainLayout->addLayout(leftLayout, 4);
     mainLayout->addLayout(ctrl, 1);
     mainLayout->addLayout(rightGrid, 3);
@@ -467,13 +476,13 @@ void MainWindow::updateProcess() {
 
     // 生成生产层
     m_layerGenerator.generateLayers(imgCopper, imgMask, imgSilk, imgBottom, m_layers);
-
+    /*
     // 更新 UI 显示
     auto setScaled = [this](QLabel* label, const QImage& img) {
         if (img.isNull() || label->size().isEmpty()) return;
         label->setPixmap(QPixmap::fromImage(img).scaled(label->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
     };
-
+    */
     // 叠加灯光与范围（如果启用），并在渲染时尊重敷铜与底层透光遮挡规则
     if (showOverlay) {
         m_ledLayoutEngine.renderCompositeWithLEDs(
@@ -489,15 +498,48 @@ void MainWindow::updateProcess() {
     }
     m_previewComposite = imgComp;
     updateCompositePreview(m_previewComposite);
-    setScaled(l_copper, m_layers["Top_Copper"]);
-    setScaled(l_mask, m_layers["Top_Mask"]);
-    setScaled(l_silk, m_layers["Top_Silk"]);
-    setScaled(l_bottom, m_layers["Bottom_Mask"]);
+    updateLayerPreview(l_copper, m_layers["Top_Copper"], m_layerPreviewStates[l_copper]);
+    updateLayerPreview(l_mask, m_layers["Top_Mask"], m_layerPreviewStates[l_mask]);
+    updateLayerPreview(l_silk, m_layers["Top_Silk"], m_layerPreviewStates[l_silk]);
+    updateLayerPreview(l_bottom, m_layers["Bottom_Mask"], m_layerPreviewStates[l_bottom]);
 
     // 独立的灯条预览widget已移除，灯光在主预览上叠加显示
     if (!m_isApplyingArgs) syncArgsToJson();
 }
 
+void MainWindow::clampPreviewPan(QLabel* label, const QImage& img, PreviewState& state) {
+    if (!label || img.isNull() || label->size().isEmpty()) {
+        state.pan = QPointF(0, 0);
+        return;
+    }
+
+    const QSize labelSize = label->size();
+    const QRectF r = calcPreviewRect(labelSize, img.size(), state.zoom, QPointF(0, 0));
+    const double maxPanX = qMax(0.0, (r.width() - labelSize.width()) * 0.5);
+    const double maxPanY = qMax(0.0, (r.height() - labelSize.height()) * 0.5);
+    state.pan.setX(qBound(-maxPanX, state.pan.x(), maxPanX));
+    state.pan.setY(qBound(-maxPanY, state.pan.y(), maxPanY));
+}
+
+void MainWindow::updateLayerPreview(QLabel* label, const QImage& img, PreviewState& state) {
+    if (!label || img.isNull() || label->size().isEmpty()) return;
+
+    clampPreviewPan(label, img, state);
+    const QSize labelSize = label->size();
+    const QRectF targetRect = calcPreviewRect(labelSize, img.size(), state.zoom, state.pan);
+
+    QPixmap canvas(labelSize);
+    canvas.fill(QColor(26, 26, 26));
+
+    QPainter painter(&canvas);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+    painter.drawImage(targetRect, img);
+    painter.end();
+
+    label->setPixmap(canvas);
+}
+
+// 恢复：主预览的 clamp 与 渲染、以及 mapLabelToImage 与若干对话框/操作实现
 void MainWindow::clampPreviewPan() {
     if (m_previewComposite.isNull() || !l_composite || l_composite->size().isEmpty()) {
         m_previewPan = QPointF(0, 0);
@@ -651,11 +693,6 @@ void MainWindow::openDouglasPeuckerDialog() {
     widthLay->addWidget(wSpin);
     layout->addLayout(widthLay);
 
-    // immediate update when controls change
-    connect(enableCheck, &QCheckBox::toggled, this, [=](bool checked){ Q_UNUSED(checked); });
-    connect(tolSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [=](double){ /* placeholder */ });
-    connect(wSpin, QOverload<int>::of(&QSpinBox::valueChanged), this, [=](int){ /* placeholder */ });
-
     QDialogButtonBox *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
@@ -669,6 +706,68 @@ void MainWindow::openDouglasPeuckerDialog() {
         if (m_dpLineWidth < 1) m_dpLineWidth = 1;
         updateProcess();
     }
+}
+
+bool MainWindow::handleLayerPreviewEvent(QLabel* label, QEvent* event, const QImage& img, PreviewState& state) {
+    if (!label || img.isNull()) return false;
+
+    if (event->type() == QEvent::Wheel) {
+        QWheelEvent* we = static_cast<QWheelEvent*>(event);
+        const int delta = we->angleDelta().y();
+        if (delta == 0) return true;
+
+        const double factor = std::pow(1.12, delta / 120.0);
+        const double oldZoom = state.zoom;
+        const double newZoom = qBound(0.2, oldZoom * factor, 8.0);
+        if (std::abs(newZoom - oldZoom) < 1e-6) return true;
+
+        const QPoint cursorPos = we->pos();
+        const QRectF oldRect = calcPreviewRect(label->size(), img.size(), oldZoom, state.pan);
+        state.zoom = newZoom;
+
+        if (oldRect.contains(QPointF(cursorPos))) {
+            const double u = (cursorPos.x() - oldRect.left()) / oldRect.width();
+            const double v = (cursorPos.y() - oldRect.top()) / oldRect.height();
+            const QRectF newRect = calcPreviewRect(label->size(), img.size(), state.zoom, state.pan);
+            const QPointF mapped(newRect.left() + u * newRect.width(), newRect.top() + v * newRect.height());
+            state.pan += QPointF(cursorPos.x() - mapped.x(), cursorPos.y() - mapped.y());
+        }
+
+        clampPreviewPan(label, img, state);
+        updateLayerPreview(label, img, state);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonPress) {
+        QMouseEvent* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::MiddleButton || me->button() == Qt::RightButton) {
+            state.isPanning = true;
+            state.lastPanPos = me->pos();
+            label->setCursor(Qt::ClosedHandCursor);
+            return true;
+        }
+    }
+
+    if (event->type() == QEvent::MouseMove && state.isPanning) {
+        QMouseEvent* me = static_cast<QMouseEvent*>(event);
+        const QPoint delta = me->pos() - state.lastPanPos;
+        state.lastPanPos = me->pos();
+        state.pan += QPointF(delta.x(), delta.y());
+        clampPreviewPan(label, img, state);
+        updateLayerPreview(label, img, state);
+        return true;
+    }
+
+    if (event->type() == QEvent::MouseButtonRelease) {
+        QMouseEvent* me = static_cast<QMouseEvent*>(event);
+        if ((me->button() == Qt::MiddleButton || me->button() == Qt::RightButton) && state.isPanning) {
+            state.isPanning = false;
+            label->unsetCursor();
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
@@ -751,6 +850,14 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
                 l_composite->unsetCursor();
                 return true;
             }
+        }
+    }
+
+    QLabel* label = qobject_cast<QLabel*>(obj);
+    if (label && m_layerPreviewKeys.contains(label) && !m_layers.isEmpty()) {
+        const QString key = m_layerPreviewKeys.value(label);
+        if (m_layers.contains(key)) {
+            return handleLayerPreviewEvent(label, event, m_layers.value(key), m_layerPreviewStates[label]);
         }
     }
     return QMainWindow::eventFilter(obj, event);
@@ -1255,6 +1362,11 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     } else if (!processedOrigin.isNull()) {
         updateProcess();
     }
+
+    if (l_copper && m_layers.contains("Top_Copper")) updateLayerPreview(l_copper, m_layers["Top_Copper"], m_layerPreviewStates[l_copper]);
+    if (l_mask && m_layers.contains("Top_Mask")) updateLayerPreview(l_mask, m_layers["Top_Mask"], m_layerPreviewStates[l_mask]);
+    if (l_silk && m_layers.contains("Top_Silk")) updateLayerPreview(l_silk, m_layers["Top_Silk"], m_layerPreviewStates[l_silk]);
+    if (l_bottom && m_layers.contains("Bottom_Mask")) updateLayerPreview(l_bottom, m_layers["Bottom_Mask"], m_layerPreviewStates[l_bottom]);
 }
 
 void MainWindow::openPaintEditor() {
