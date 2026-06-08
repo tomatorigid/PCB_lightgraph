@@ -6,23 +6,6 @@
 
 ---
 
-## 目录 | Table of Contents
-
-- [项目定位 | Project Positioning](#项目定位--project-positioning)
-- [核心能力总览 | Core Capability Overview](#核心能力总览--core-capability-overview)
-- [重点技术与算法说明 | Key Technologies and Algorithms](#重点技术与算法说明--key-technologies-and-algorithms)
-- [性能优化与工程化改进 | Performance and Engineering Improvements](#性能优化与工程化改进--performance-and-engineering-improvements)
-- [新版更新报告（重点）| Major Update Report](#新版更新报告重点-major-update-report)
-- [界面与交互流程 | UI and Workflow](#界面与交互流程--ui-and-workflow)
-- [工程文件（PCBLG）规范 | PCBLG Project Format](#工程文件pcblg规范--pcblg-project-format)
-- [使用指南 | Usage Guide](#使用指南--usage-guide)
-- [构建说明 | Build Guide](#构建说明--build-guide)
-- [项目结构 | Project Structure](#项目结构--project-structure)
-- [已知限制与后续计划 | Known Limits and Roadmap](#已知限制与后续计划--known-limits-and-roadmap)
-- [许可证 | License](#许可证--license)
-
----
-
 ## 项目定位 | Project Positioning
 
 **PCB_lightgraph** 是一个将 2D 插画快速转换为可制造 PCB 分层图纸的桌面工具，目标是把“视觉设计”与“可生产工艺”之间的转换流程自动化。
