@@ -10,11 +10,12 @@
 
 </div>
 
+
 ---
 
 ## 🎯 项目定位 | Project Positioning
 
-**PCB_lightgraph** 是一个将 2D 插画快速转换为可制造 PCB 分层图纸的桌面工具，目标是把“视觉设计”与“可生产工艺”之间的转换流程自动化。
+**PCB_lightgraph** 是一个将 2D 插画快速转换为可制造 PCB 分层图纸的桌面工具，目标是把“视觉设计”与“可生产工艺”之间的转换流程自动化。支持**单面5色+透光n色**的效果
 
 **PCB_lightgraph** is a desktop utility that transforms 2D artwork into manufacturable PCB layer images, bridging visual design and PCB production constraints.
 
@@ -24,6 +25,12 @@
 
 ---
 
+### 作者 bilibili [@芙ling痛恨数学分析](https://space.bilibili.com/549252923)
+- 🎬[v1.1.1教学视频-【教程】 PCB艺术画制作 速通 | PCB画软件教程 | PCB_lightgraph](https://www.bilibili.com/video/BV1bJRbBeEW9/)
+### 感谢[@御坂10297号](https://space.bilibili.com/454466365) 制作教学视频&分享项目
+- 🎬[v1.2.0教学视频- 从零开始的二次元电路板艺术画设计教程](https://www.bilibili.com/video/BV1CQjz6ZELZ/)
+
+---
 ## ⚡ 核心能力总览 | Core Capability Overview
 
 ### 1) 🎨 多层图像自动拆分 | Multi-layer Decomposition
@@ -31,6 +38,7 @@
 - **Top Mask**（阻焊开窗）
 - **Top Silk**（丝印图形）
 - **Bottom Mask**（背面透光）
+- 以达到实现**单面5色+透光n色**的效果
 
 ### 2) 💡 灯光布局与预览 | LED Layout and Rendering
 - 🤖 自动布灯（重心建议）+ 手动布灯
@@ -38,15 +46,15 @@
 - ⚙️ 散射半径和中心不透明度可调
 
 ### 3) 📐 边缘处理双模式 | Dual Edge Operation Modes
-- ✨ 边缘增强（Edge Enhance）
-- 🖊️ 描边（Canny Stroke）
+- ✨ 边缘增强（Edge Enhance）（使用拉普拉斯算子）
+- 🖊️ 描边（Canny Stroke）（使用canny算子）
 - 🔗 两者共享阈值与预处理参数，便于统一调参
 
 ### 4) 💾 工程保存/导入 | Project Save/Load
-- 📂 支持 `*.pcblg` 工程包
+- 📂 支持 `*.pcblg` 工程包保存/打开工程
 
-### 5) 🔄 实时外部编辑联动 | External Live Editing
-- 🖥️ 菜单 `File -> 画图实时编辑`
+### 5) 🔄 图像编辑联动 | External Live Editing
+- 🖥️ 菜单 `File -> 画图实时编辑`进行原图编辑
 
 ---
 
@@ -75,25 +83,17 @@
 
 ---
 
-## 🚀 性能优化与工程化改进 | Performance and Engineering Improvements
+## 🚀 性能和兼容性和优化处理 
 
-### 1) ⚡ 边缘计算缓存化（重大）
-对边缘处理路径增加缓存策略，避免重复计算，边缘模式切换与反复预览时响应明显改善。
+### 1) ⚡ 边缘计算缓存化算法
+- 对边缘处理路径增加缓存策略，避免重复计算，边缘模式切换与反复预览时响应速度极大改善。
 
-### 2) 🛡️ 大图导入稳定性改进
-对超大分辨率输入进行像素上限预判和比例缩放导入，降低崩溃风险（作者环境实测稳定）。
+### 2) 🛡️ 大图导入高稳定性
+- 对超大分辨率输入进行像素上限预判和比例缩放导入，降低崩溃风险（作者环境实测稳定）。
 
-### 3) 🔍 图片格式兼容增强
-增加文件头格式检测并处理“后缀与真实编码不一致”的情况，修复此前部分错误编码图片无法打开的问题。
+### 3) 🔍 图片格式强兼容
+- 考虑到文件头格式检测并处理“后缀与真实编码不一致”的情况，使错误编码图片也可以正常打开。
 
-### 4) 📦 临时工作区机制（temp）
-- 📂 运行目录维护 `temp` 工作区
-- 📥 图片导入复制到 temp
-- 📝 维护 `args.json` 参数快照
-- 🧹 程序退出尝试清理 temp 图片
-
-### 5) 🔄 外部编辑热更新
-通过定时检测 temp 图片时间戳/大小变化，在外部编辑保存后自动重载主流程，形成“编辑-回看”闭环。
 
 ---
 
@@ -124,7 +124,7 @@
 1. 📥 打开程序并点击 `导入图片`
 2. ⚙️ 调整基础参数（工艺、阻焊色、阈值）
 3. ✨ 视需求开启边缘操作，选择描边或增强
-4. 💡 使用自动/手动布灯查看综合效果
+4. 💡 使用自动/手动布灯查看综合效果（可选）
 5. 📤 导出四层图纸用于后续 EDA 流程
 6. 💾 若需中途保存，使用 `保存工程 (.pcblg)`
 7. 🖌️ 若需外部修图，使用 `画图实时编辑`，在画图中 `Ctrl+S` 后回到程序自动重载
@@ -136,6 +136,7 @@
 ### 📋 环境要求
 - Qt 5.9+
 - Windows (MinGW/MSVC 均可)
+- 完全支持其他全平台，但需修改原代码中画图触发相关代码后进行编译
 
 ### 🛠️ 构建步骤
 1. Qt Creator 打开 `PCB_lightgraph.pro`
@@ -147,20 +148,17 @@
 ## 🖼️ 软件截图与示例 | Screenshots and Examples
 
 软件界面（示例）：
-
+<img width="2559" height="1530" alt="image" src="https://github.com/user-attachments/assets/1e70a3b7-f325-43de-90f6-bf9ca125af65" />
+↑自动勾线，单面5色
 <img width="2559" height="1521" alt="屏幕截图 2026-05-08 212013" src="https://github.com/user-attachments/assets/ea3f0a1f-cd2b-49db-b08f-d1f1839b91fc" />
 
-边缘增强关闭：
 
-![edge_off](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/edge_off.png)
+其他相关视频：
+🎬 [PCB灯光画以战双帕弥什露西亚为例](https://www.bilibili.com/video/BV1EgAaz2Exx/)
 
-边缘增强开启：
+<img width="50%" alt="458ede76726c7e29fddb82d592969e5c" src="https://github.com/user-attachments/assets/364053e0-3cd5-4aed-b8bb-f0e12377a571" />
 
-![edge_on](https://github.com/tomatorigid/PCB_lightgraph/blob/main/ref_pics/edge_on.png)
-
-参考视频：
-
-🎬 [点击观看：以战双帕弥什露西亚为例](https://www.bilibili.com/video/BV1EgAaz2Exx/)
+↑可以很方便实现灯光效果
 
 ---
 
