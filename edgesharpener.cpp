@@ -229,6 +229,7 @@ QColor EdgeSharpener::determineEdgeColor(const QImage& srcImage, int x, int y, i
 
 QImage EdgeSharpener::processEdgeSharpening(const QImage& srcImage,
     int edgeThreshMin,int edgeThreshMax,int autoInvertRange,
+    bool useMetal,const QColor& metalColor,
     bool enablePreFilter,int gaussianKernelSize,double gaussianSigma,
     bool enableDouglasPeucker,double dpTolerance,int dpLineWidth) {
 
@@ -238,6 +239,8 @@ QImage EdgeSharpener::processEdgeSharpening(const QImage& srcImage,
         edgeThreshMin,
         edgeThreshMax,
         autoInvertRange,
+        useMetal,
+        metalColor,
         enablePreFilter,
         gaussianKernelSize,
         gaussianSigma,
@@ -250,6 +253,7 @@ QImage EdgeSharpener::processEdgeSharpening(const QImage& srcImage,
 QImage EdgeSharpener::processEdgeOperation(const QImage& srcImage,
     OperationMode mode,
     int edgeThreshMin,int edgeThreshMax,int autoInvertRange,
+    bool useMetal,const QColor& metalColor,
     bool enablePreFilter,int gaussianKernelSize,double gaussianSigma,
     bool enableDouglasPeucker,double dpTolerance,int dpLineWidth) {
 
@@ -271,7 +275,9 @@ QImage EdgeSharpener::processEdgeOperation(const QImage& srcImage,
         for (const auto &comp : components) {
             QVector<QPoint> simplified; douglasPeuckerSimplify(comp, dpTolerance, simplified);
             if (simplified.size()>=2) {
-                const QColor edgeColor = determineEdgeColor(srcImage, comp.first().x(), comp.first().y(), autoInvertRange);
+                QColor edgeColor;
+                if (useMetal) edgeColor = metalColor.isValid() ? metalColor : QColor(218,165,32);
+                else edgeColor = determineEdgeColor(srcImage, comp.first().x(), comp.first().y(), autoInvertRange);
                 QPen pen(edgeColor);
                 pen.setWidth(qMax(1, dpLineWidth));
                 painter.setPen(pen);
@@ -286,14 +292,26 @@ QImage EdgeSharpener::processEdgeOperation(const QImage& srcImage,
         for (int y=1;y<h-1;++y) for (int x=1;x<w-1;++x) {
             if (!edgeMask.constScanLine(y)[x]) continue;
             QColor edgeColor;
-            if (autoInvertRange == -1) edgeColor = QColor(0,0,0);
-            else if (autoInvertRange == 0) edgeColor = QColor(255,255,255);
-            else {
-                int r = autoInvertRange; int avg = averageGrayInBox(x-r,y-r,x+r,y+r);
-                edgeColor = (avg>128)?QColor(0,0,0):QColor(255,255,255);
+            if (useMetal) {
+                edgeColor = metalColor.isValid() ? metalColor : QColor(218,165,32);
+            } else {
+                if (autoInvertRange == -1) edgeColor = QColor(0,0,0);
+                else if (autoInvertRange == 0) edgeColor = QColor(255,255,255);
+                else {
+                    int r = autoInvertRange; int avg = averageGrayInBox(x-r,y-r,x+r,y+r);
+                    edgeColor = (avg>128)?QColor(0,0,0):QColor(255,255,255);
+                }
             }
             result.setPixel(x,y, edgeColor.rgb());
         }
         return result;
     }
+}
+
+QImage EdgeSharpener::buildEdgeMaskForImage(const QImage& srcImage, OperationMode mode, int edgeThreshMin, int edgeThreshMax, bool enablePreFilter, int gaussianKernelSize, double gaussianSigma) {
+    if (srcImage.isNull()) return QImage();
+    QImage working = enablePreFilter ? applyGaussianBlur(srcImage, gaussianKernelSize, gaussianSigma) : srcImage;
+    buildCacheIfNeeded(working);
+    if (mode == OperationMode::StrokeCanny) return buildCannyMask(edgeThreshMin, edgeThreshMax);
+    return buildLaplacianMask(edgeThreshMin, edgeThreshMax);
 }

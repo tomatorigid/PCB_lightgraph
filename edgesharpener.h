@@ -3,6 +3,7 @@
 
 #include <QImage>
 #include <QVector>
+#include <QColor>
 
 /**
  * @brief 边缘锐化和增强处理
@@ -30,6 +31,8 @@ public:
         int edgeThreshMin,
         int edgeThreshMax,
         int autoInvertRange,
+        bool useMetal = false,
+        const QColor& metalColor = QColor(),
         bool enablePreFilter = true,
         int gaussianKernelSize = 5,
         double gaussianSigma = 1.1,
@@ -38,12 +41,17 @@ public:
         int dpLineWidth = 2
     );
 
+    // Public wrapper: 生成二值边缘掩码（255 表示边缘）供外部覆盖层使用
+    QImage buildEdgeMaskForImage(const QImage& srcImage, OperationMode mode, int edgeThreshMin, int edgeThreshMax, bool enablePreFilter = true, int gaussianKernelSize = 5, double gaussianSigma = 1.1);
+
     QImage processEdgeOperation(
         const QImage& srcImage,
         OperationMode mode,
         int edgeThreshMin,
         int edgeThreshMax,
         int autoInvertRange,
+        bool useMetal = false,
+        const QColor& metalColor = QColor(),
         bool enablePreFilter = true,
         int gaussianKernelSize = 5,
         double gaussianSigma = 1.1,

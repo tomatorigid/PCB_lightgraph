@@ -93,6 +93,7 @@ private:
     QAction *action_exportLayers = nullptr;
     QComboBox *combo_surfaceFinish; // 表面处理：沉金 / 喷锡
     QCheckBox *check_lightEnable;
+    QCheckBox *check_expandPreviews; // 控制右侧四个预览是否展开
     QGroupBox *group_edgeOperation;
     QCheckBox *check_edgeEnable;
     QRadioButton *radio_edgeStroke;
@@ -108,6 +109,8 @@ private:
     QSlider *s_bareSubstrateGrayA;
     QSlider *s_bareSubstrateGrayB;
     QSlider *s_bareSubstrateColorSimilarity;
+    QCheckBox *check_useMetalEdge; // 在边缘操作中：使用金属勾线
+    QCheckBox *check_exposeMetalEdge; // 裸露金属勾线（当使用金属时，是否在阻焊开窗以露出铜），默认勾选
 
     // 实验性：边缘滤波预处理，同时影响描边与边缘增强
     bool m_edgePrefilterEnabled = true;

@@ -118,7 +118,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     connect(m_tempReloadTimer, &QTimer::timeout, this, &MainWindow::checkTempImageUpdated);
     m_tempReloadTimer->start(1200);
 
-    setWindowTitle("PCB 透光画拆分工具v1.3.1 https://github.com/tomatorigid/PCB_lightgraph");
+    setWindowTitle("PCB 透光画拆分工具v1.4 https://github.com/tomatorigid/PCB_lightgraph");
 }
 
 MainWindow::~MainWindow() {
@@ -154,12 +154,16 @@ void MainWindow::setupUI() {
     QVBoxLayout *basicLayout = new QVBoxLayout(group_basic);
     combo_surfaceFinish = new QComboBox();
     combo_surfaceFinish->addItems({"沉金 (亮金)", "喷锡 (银色)"});
-    connect(combo_surfaceFinish, SIGNAL(currentIndexChanged(int)), this, SLOT(updateProcess()));
+    // 当表面处理变更时，除了更新处理外，还要确保边缘面板的金属勾线状态被正确同步
+    connect(combo_surfaceFinish, QOverload<int>::of(&QComboBox::currentIndexChanged), [=](int){
+        if (check_useMetalEdge && s_autoInvert) s_autoInvert->setEnabled(!check_useMetalEdge->isChecked());
+        updateProcess();
+    });
     basicLayout->addWidget(new QLabel("表面处理工艺:"));
     basicLayout->addWidget(combo_surfaceFinish);
 
     combo_maskColor = new QComboBox();
-    combo_maskColor->addItems({"蓝色", "黑色", "红色", "绿色", "白色"});
+    combo_maskColor->addItems({"蓝色", "黑色", "红色", "绿色"});
     connect(combo_maskColor, SIGNAL(currentIndexChanged(int)), this, SLOT(updateProcess()));
     basicLayout->addWidget(new QLabel("阻焊颜色:"));
     basicLayout->addWidget(combo_maskColor);
@@ -287,6 +291,17 @@ void MainWindow::setupUI() {
 
     s_edgeThresh = createSlider("强边缘阈值/边缘下限阈值", 0, 255, 50, edgeDetailLayout);
     s_edgeThreshMax = createSlider("弱边缘阈值/边缘上限阈值", 0, 255, 200, edgeDetailLayout); // 新增上限，默认值设高一些
+
+    // 使用金属（勾选时用金属色勾线，自动反色不可用）
+    check_useMetalEdge = new QCheckBox("使用金属");
+    check_useMetalEdge->setChecked(false);
+    edgeDetailLayout->addWidget(check_useMetalEdge);
+
+    // 裸露金属勾线（当使用金属时，将在阻焊层开窗以露出铜）
+    check_exposeMetalEdge = new QCheckBox("裸露金属勾线");
+    check_exposeMetalEdge->setChecked(true);
+    edgeDetailLayout->addWidget(check_exposeMetalEdge);
+
     s_autoInvert = createSlider("自动反色范围", -1, 50, 10, edgeDetailLayout);
     edgeOpLayout->addWidget(edgeDetailWidget);
     ctrl->addWidget(group_edgeOperation);
@@ -297,6 +312,12 @@ void MainWindow::setupUI() {
     auto updateEdgeControlState = [=]() {
         const bool enabled = check_edgeEnable->isChecked();
         edgeDetailWidget->setVisible(enabled);
+        // 当使用金属勾线时，自动反色范围不可用；裸露金属勾线仅在使用金属时显示
+        if (check_useMetalEdge) {
+            const bool useMetal = check_useMetalEdge->isChecked();
+            s_autoInvert->setEnabled(!useMetal);
+            if (check_exposeMetalEdge) check_exposeMetalEdge->setVisible(useMetal);
+        }
     };
 
     connect(check_edgeEnable, &QCheckBox::toggled, [=](bool){
@@ -308,6 +329,13 @@ void MainWindow::setupUI() {
     });
     connect(radio_edgeEnhance, &QRadioButton::toggled, [=](bool checked){
         if (checked) updateProcess();
+    });
+    connect(check_useMetalEdge, &QCheckBox::toggled, [=](bool){
+        updateEdgeControlState();
+        updateProcess();
+    });
+    connect(check_exposeMetalEdge, &QCheckBox::toggled, [=](bool){
+        updateProcess();
     });
     updateEdgeControlState();
 
@@ -329,6 +357,11 @@ void MainWindow::setupUI() {
     actionLayout->addLayout(actionButtonsLayout);
     ctrl->addWidget(group_actions);
     ctrl->addStretch();
+
+    // Checkbox: 展开右侧预览（默认不勾选）
+    check_expandPreviews = new QCheckBox("展开生产层预览");
+    check_expandPreviews->setChecked(false);
+    ctrl->addWidget(check_expandPreviews);
 
     // --- 右侧：四个生产层预览 ---
     QGridLayout *rightGrid = new QGridLayout;
@@ -357,9 +390,21 @@ void MainWindow::setupUI() {
     l_silk->installEventFilter(this);
     l_bottom->installEventFilter(this);
 
+    // 使用一个包装 widget 包含右侧预览，以便通过 show/hide 控制展示
+    QWidget *rightPanel = new QWidget;
+    rightPanel->setLayout(rightGrid);
+
+    // 初始不展示（复选框默认不勾选）
+    rightPanel->setVisible(false);
+
     mainLayout->addLayout(leftLayout, 4);
     mainLayout->addLayout(ctrl, 1);
-    mainLayout->addLayout(rightGrid, 3);
+    mainLayout->addWidget(rightPanel, 3);
+
+    // 切换展开时直接显示/隐藏右侧面板
+    connect(check_expandPreviews, &QCheckBox::toggled, [=](bool checked){
+        rightPanel->setVisible(checked);
+    });
 
     setCentralWidget(central);
     resize(1200, 800); // 初始窗口大小
@@ -409,36 +454,31 @@ void MainWindow::updateProcess() {
 
     processedOrigin = m_origin;
 
-    // 应用边缘操作（边缘增强 / 描边Canny），共用同一组参数控件
-    if (check_edgeEnable && check_edgeEnable->isChecked()) {
-        const EdgeSharpener::OperationMode edgeMode =
-            (radio_edgeStroke && radio_edgeStroke->isChecked())
-                ? EdgeSharpener::OperationMode::StrokeCanny
-                : EdgeSharpener::OperationMode::EdgeEnhance;
-        processedOrigin = m_edgeSharpener.processEdgeOperation(
-            processedOrigin,
-            edgeMode,
-            s_edgeThresh->value(),
-            s_edgeThreshMax->value(),
-            s_autoInvert->value(),
-            m_edgePrefilterEnabled,
-            m_edgePrefilterKernelSize,
-            m_edgePrefilterSigma,
-            m_dpEnabled,
-            m_dpTolerance,
-            m_dpLineWidth
-        );
-    }
-
     // 获取参数
     QString maskColorName = combo_maskColor->currentText();
     QString finishType = combo_surfaceFinish->currentText();
-    bool isWhiteMask = (maskColorName == "白色");
+    bool isWhiteMask = false;
     bool enableBareSubstrate = (check_bareSubstrateEnable && check_bareSubstrateEnable->isChecked());
     bool bareSubstrateUseGrayBinding = (radio_bareSubstrateGray && radio_bareSubstrateGray->isChecked());
     int bareSubstrateGrayMinPct = s_bareSubstrateGrayA ? s_bareSubstrateGrayA->value() : 0;
     int bareSubstrateGrayMaxPct = s_bareSubstrateGrayB ? s_bareSubstrateGrayB->value() : 0;
     int bareSubstrateColorSimilarityPct = s_bareSubstrateColorSimilarity ? s_bareSubstrateColorSimilarity->value() : 0;
+
+    // 在执行边缘操作前，准备金属勾线参数
+    bool useMetalEdge = (check_useMetalEdge && check_useMetalEdge->isChecked());
+    QColor metalEdgeColor = m_imageProcessor.getMetalRenderColor(finishType);
+
+    // 应用边缘操作（边缘增强 / 描边Canny）——
+    // 若使用金属勾线（useMetalEdge == true），不要在源图上直接绘制（以免被后续的像素分类覆盖），
+    // 改为在生成的合成图像上再绘制。否则保持原有行为（在源图上绘制，影响各层）。
+    EdgeSharpener::OperationMode edgeMode =
+        (radio_edgeStroke && radio_edgeStroke->isChecked())
+            ? EdgeSharpener::OperationMode::StrokeCanny
+            : EdgeSharpener::OperationMode::EdgeEnhance;
+
+    // 当不使用金属勾线时，不应把边缘直接绘制回源图（processedOrigin），
+    // 否则会被 ImageProcessor 的像素分类放大/改变导致线变粗或误判。
+    // edgeMask 已在上方基于 processedOrigin 生成，用于在分类后覆盖为丝印。
 
     int goldThresh = s_gold->value();
     int silkThresh = s_silk->value();
@@ -449,6 +489,12 @@ void MainWindow::updateProcess() {
 
     // 使用 ImageProcessor 处理图像
     QImage imgCopper, imgMask, imgSilk, imgBottom, imgComp;
+
+    // 如果边缘启用，预先基于 processedOrigin 生成边缘掩码（用于后续覆盖或铜层反映）
+    QImage edgeMask;
+    if (check_edgeEnable && check_edgeEnable->isChecked()) {
+        edgeMask = m_edgeSharpener.buildEdgeMaskForImage(processedOrigin, edgeMode, s_edgeThresh->value(), s_edgeThreshMax->value(), m_edgePrefilterEnabled, m_edgePrefilterKernelSize, m_edgePrefilterSigma);
+    }
 
     m_imageProcessor.processImage(
         processedOrigin,
@@ -474,8 +520,69 @@ void MainWindow::updateProcess() {
         false // keep base composite clean; overlay is rendered by LEDLayoutEngine below
     );
 
+    // 若存在边缘掩码：
+    if (!edgeMask.isNull()) {
+        int w = qMin(edgeMask.width(), imgCopper.width());
+        int h = qMin(edgeMask.height(), imgCopper.height());
+        const QColor silkColor = m_imageProcessor.getSilkColor(maskColorName);
+
+        if (useMetalEdge) {
+            // 将边缘反映或作为预览遮罩颜色覆盖（若未选择裸露铜则用浅色阻焊预览）
+            QRgb metalRgb = metalEdgeColor.rgb();
+            QColor maskColor = m_imageProcessor.getSolderMaskColor(maskColorName);
+            QRgb previewMaskLight = maskColor.lighter(135).rgb();
+            auto blendRgb = [](QRgb base, QRgb top, int topWeight255) -> QRgb {
+                int baseWeight255 = 255 - topWeight255;
+                return qRgb(
+                    (qRed(base) * baseWeight255 + qRed(top) * topWeight255) / 255,
+                    (qGreen(base) * baseWeight255 + qGreen(top) * topWeight255) / 255,
+                    (qBlue(base) * baseWeight255 + qBlue(top) * topWeight255) / 255);
+            };
+            for (int y = 0; y < h; ++y) {
+                const uchar* em = (const uchar*)edgeMask.constScanLine(y);
+                QRgb *lineCopper = (QRgb*)imgCopper.scanLine(y);
+                QRgb *lineMask = (QRgb*)imgMask.scanLine(y);
+                QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
+                QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
+                for (int x = 0; x < w; ++x) {
+                    if (em[x] > 0) {
+                        // 金属勾线始终要反映到铜层
+                        lineCopper[x] = 0xFFFFFFFF;
+
+                        // 仅在“裸露金属勾线”被选中时改变阻焊/丝印
+                        if (check_exposeMetalEdge && check_exposeMetalEdge->isChecked()) {
+                            lineSilk[x] = 0xFF000000; // 移除该位置的丝印
+                            lineMask[x] = 0xFFFFFFFF; // 阻焊开窗以露出铜
+                            // 露铜预览使用金属颜色
+                            lineComp[x] = metalRgb;
+                        } else {
+                            // 未露铜：沿用“敷铜层较深”相同的浅色阻焊混合方式
+                            lineComp[x] = blendRgb(lineComp[x], previewMaskLight, 170);
+                        }
+                    }
+                }
+            }
+        } else {
+            // 将边缘作为丝印覆盖到 imgSilk 和 imgComp（避免被判为金属）
+            int w2 = qMin(edgeMask.width(), imgSilk.width());
+            int h2 = qMin(edgeMask.height(), imgSilk.height());
+            for (int y = 0; y < h2; ++y) {
+                const uchar* em = (const uchar*)edgeMask.constScanLine(y);
+                QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
+                QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
+                for (int x = 0; x < w2; ++x) {
+                    if (em[x] > 0) {
+                        lineSilk[x] = 0xFFFFFFFF;
+                        lineComp[x] = silkColor.rgb();
+                    }
+                }
+            }
+        }
+    }
+
     // 生成生产层
     m_layerGenerator.generateLayers(imgCopper, imgMask, imgSilk, imgBottom, m_layers);
+
     /*
     // 更新 UI 显示
     auto setScaled = [this](QLabel* label, const QImage& img) {
@@ -1074,6 +1181,8 @@ void MainWindow::syncArgsToJson() {
     controls["edgeThreshMin"] = s_edgeThresh ? s_edgeThresh->value() : 0;
     controls["edgeThreshMax"] = s_edgeThreshMax ? s_edgeThreshMax->value() : 0;
     controls["autoInvert"] = s_autoInvert ? s_autoInvert->value() : 0;
+    controls["useMetalEdge"] = check_useMetalEdge ? check_useMetalEdge->isChecked() : false;
+    controls["exposeMetalEdge"] = check_exposeMetalEdge ? check_exposeMetalEdge->isChecked() : true;
 
     root["controls"] = controls;
 
@@ -1131,9 +1240,9 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
         QSignalBlocker blocker(s);
         s->setValue(clamped);
     };
+    // setCheck intentionally emits the toggled() signal so UI detail panels update when loading projects
     auto setCheck = [](QCheckBox* c, bool checked) {
         if (!c) return;
-        QSignalBlocker blocker(c);
         c->setChecked(checked);
     };
     auto setRadio = [](QRadioButton* r, bool checked) {
@@ -1148,6 +1257,21 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
         QSignalBlocker blocker(c);
         c->setCurrentIndex(i);
     };
+
+    // 检查 controls 中是否包含预期的键；若缺少则提示但仍尝试加载（兼容旧版本）
+    QStringList expectedKeys = {
+        "surfaceFinishIndex","maskColorIndex","goldThresh","silkThresh","transThresh","copperDepth",
+        "lightEnable","showLEDOverlay","autoSense","ledRadius","ledIntensity",
+        "bareSubstrateEnable","bareSubstrateGrayMode","bareSubstrateGrayA","bareSubstrateGrayB","bareSubstrateColorSimilarity",
+        "edgeEnable","edgeMode","edgeThreshMin","edgeThreshMax","autoInvert","useMetalEdge","exposeMetalEdge"
+    };
+    bool missingKey = false;
+    for (const QString &k : expectedKeys) {
+        if (!controls.contains(k)) { missingKey = true; break; }
+    }
+    if (missingKey) {
+        QMessageBox::warning(this, "提示", QStringLiteral("本项目文件为旧版本或已损坏，将尝试加载"));
+    }
 
     m_isApplyingArgs = true;
 
@@ -1180,6 +1304,8 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
     setSlider(s_edgeThresh, controls.value("edgeThreshMin").toInt(s_edgeThresh ? s_edgeThresh->value() : 0));
     setSlider(s_edgeThreshMax, controls.value("edgeThreshMax").toInt(s_edgeThreshMax ? s_edgeThreshMax->value() : 0));
     setSlider(s_autoInvert, controls.value("autoInvert").toInt(s_autoInvert ? s_autoInvert->value() : 0));
+    setCheck(check_useMetalEdge, controls.value("useMetalEdge").toBool(check_useMetalEdge ? check_useMetalEdge->isChecked() : false));
+    setCheck(check_exposeMetalEdge, controls.value("exposeMetalEdge").toBool(check_exposeMetalEdge ? check_exposeMetalEdge->isChecked() : true));
 
     m_edgePrefilterEnabled = experimental.value("edgePrefilterEnabled").toBool(m_edgePrefilterEnabled);
     m_edgePrefilterKernelSize = experimental.value("edgePrefilterKernelSize").toInt(m_edgePrefilterKernelSize);
@@ -1391,4 +1517,3 @@ void MainWindow::openPaintEditor() {
     QMessageBox::information(this, "提示", "将打开画图，请在画图中按下 Ctrl+S 进行更新渲染");
     QProcess::startDetached("mspaint", QStringList() << QDir::toNativeSeparators(QFileInfo(tempImage).absoluteFilePath()));
 }
-

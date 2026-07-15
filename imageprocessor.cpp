@@ -38,17 +38,21 @@ QColor ImageProcessor::getSolderMaskColor(const QString& colorName) {
     return QColor(240, 240, 240, 220); // 白色
 }
 
-QColor ImageProcessor::getSilkColor(const QString& maskColorName) {
-    return (maskColorName == "白色") ? Qt::black : Qt::white;
+QColor ImageProcessor::getSilkColor(const QString&) {
+    return Qt::white;
 }
 
 QColor ImageProcessor::getMetalRenderColor(const QString& finishType) {
     bool isHASL = finishType.contains("喷锡");
-    return isHASL ? QColor(200, 200, 215) : QColor(218, 165, 32);
+    // 原先的沉金色: QColor(218, 165, 32);
+    return isHASL ? QColor(200, 200, 215) : QColor(240, 217, 140);
 }
 
 QColor ImageProcessor::getBareSubstrateColor() {
-    return QColor(QStringLiteral("#A07D40"));
+    // 原先的基材颜色: QColor(QStringLiteral("#A07D40"));
+    // 使用 HSL(60, 30%, 62%) 显示: QColor::fromHsl(60, 77, 158);
+    // 现在改为 rgb(153, 187, 119)
+    return QColor(153, 187, 119);
 }
 
 bool ImageProcessor::isMetal(
@@ -175,7 +179,9 @@ void ImageProcessor::buildBaseLayers(
     const int grayMaxPct = qBound(0, qMax(bareSubstrateGrayMinPct, bareSubstrateGrayMaxPct), 100);
     const int similarityThreshold = qBound(0, bareSubstrateColorSimilarityPct, 100);
 
-    int effectiveCopperThresh = qBound(qMax(0, qMin(transThresh + 1, 254)), copperUnderMaskThresh, 254);
+    // Allow copper-under-mask threshold to vary across the full slider range (0..254).
+    // Previous code clamped this to transThresh+1 which made increases past that point have no effect.
+    int effectiveCopperThresh = qBound(0, copperUnderMaskThresh, 254);
 
     outCopper = QImage(w, h, QImage::Format_RGB32);
     outMask = QImage(w, h, QImage::Format_RGB32);
@@ -209,9 +215,14 @@ void ImageProcessor::buildBaseLayers(
                 }
             }
 
-            // 裸露基材只作用于对应位置的丝印层剔除，不影响阻焊层本身。
+            // 如果该像素被判定为裸露基材，则该处不应被视为敷铜（阻断铜层输出）
+            if (bareSubstratePixel) {
+                copperUnderMask = false;
+            }
+
+            // 裸露基材同时作用于丝印层剔除和阻焊开窗：启用裸露基材时，相应位置应当被视为阻焊开窗（即不覆盖阻焊）。
             bool bottomOpen = (gray > transThresh);
-            bool maskOpen = isMetalPixel || (silk && !isWhiteMask);
+            bool maskOpen = isMetalPixel || (silk && !isWhiteMask) || bareSubstratePixel;
 
             lineCopper[x] = (isMetalPixel || copperUnderMask) ? 0xFFFFFFFF : 0xFF000000;
             lineMask[x] = maskOpen ? 0xFFFFFFFF : 0xFF000000;
@@ -380,4 +391,3 @@ void ImageProcessor::processImage(
         renderLEDOverlay(outComposite, outBottom, ledStrips, ledRadVal);
     }
 }
-
