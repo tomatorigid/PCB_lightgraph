@@ -13,6 +13,11 @@
 
 ---
 
+<img width="1280" height="761" alt="image" src="https://github.com/user-attachments/assets/d7091f05-72bc-4e69-837b-43a9e4420d71" />
+一键自动金色沉金勾线，单面5色，随意调节，实时预览，图片可无需预处理。
+
+---
+
 ## 🎯 项目定位 | Project Positioning
 
 **PCB_lightgraph** 是一个将 2D 插画快速转换为可制造 PCB 分层图纸的桌面工具，目标是把“视觉设计”与“可生产工艺”之间的转换流程自动化。支持**单面5色+透光n色**的效果
@@ -145,12 +150,6 @@
 
 ---
 
-## 🖼️ 软件截图与示例 | Screenshots and Examples
-
-软件界面（示例）：
-<img width="2559" height="1530" alt="image" src="https://github.com/user-attachments/assets/1e70a3b7-f325-43de-90f6-bf9ca125af65" />
-↑自动勾线，单面5色
-<img width="2559" height="1521" alt="屏幕截图 2026-05-08 212013" src="https://github.com/user-attachments/assets/ea3f0a1f-cd2b-49db-b08f-d1f1839b91fc" />
 
 
 其他相关视频：
