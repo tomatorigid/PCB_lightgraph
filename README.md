@@ -165,9 +165,9 @@
 
 <a href="https://www.star-history.com/?repos=tomatorigid%2FPCB_lightgraph&type=date&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&theme=dark&legend=top-left&sealed_token=vfeK9wWZa7w6l_TMDJA7tqwzZCtuhI41GqdlfixSXTJi6yxdH2tlS3v9OlAONT3NofYYckccdOOjC2euExMkKe1ocjySwi_uvS6-v4gzCW7dkQzYVTdcU6N1ynxliXxGaFeeLx7Dy6u0qwIIhbnCxLcmW_evhKONp8AirfXASrlDjGxlXj9vjlV6ODpR" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&legend=top-left&sealed_token=vfeK9wWZa7w6l_TMDJA7tqwzZCtuhI41GqdlfixSXTJi6yxdH2tlS3v9OlAONT3NofYYckccdOOjC2euExMkKe1ocjySwi_uvS6-v4gzCW7dkQzYVTdcU6N1ynxliXxGaFeeLx7Dy6u0qwIIhbnCxLcmW_evhKONp8AirfXASrlDjGxlXj9vjlV6ODpR" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=tomatorigid/PCB_lightgraph&type=date&legend=top-left&sealed_token=vfeK9wWZa7w6l_TMDJA7tqwzZCtuhI41GqdlfixSXTJi6yxdH2tlS3v9OlAONT3NofYYckccdOOjC2euExMkKe1ocjySwi_uvS6-v4gzCW7dkQzYVTdcU6N1ynxliXxGaFeeLx7Dy6u0qwIIhbnCxLcmW_evhKONp8AirfXASrlDjGxlXj9vjlV6ODpR" />
  </picture>
 </a>
 
