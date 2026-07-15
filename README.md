@@ -14,7 +14,7 @@
 ---
 
 <img width="1280" height="761" alt="image" src="https://github.com/user-attachments/assets/d7091f05-72bc-4e69-837b-43a9e4420d71" />
-一键自动金色沉金勾线，单面5色，随意调节，实时预览，图片可无需预处理。
+一键自动金色沉金勾线，单面5色，随意调节，实时预览，图片可无需预处理。(此示例无预处理)
 
 ---
 
