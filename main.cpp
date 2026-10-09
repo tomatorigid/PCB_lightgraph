@@ -42,7 +42,6 @@ int main(int argc, char *argv[])
 
     MainWindow w;
     w.show();
-    w.showWelcomeDialog();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     // 深色标题栏（DWM）：窗口显示后再绑定主窗口

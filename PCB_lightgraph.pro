@@ -21,6 +21,11 @@ greaterThan(QT_MAJOR_VERSION, 5) {
     QT += svg
     INCLUDEPATH += $$PWD/third_party/FluentUI3Style/fluentui3style
     include($$PWD/third_party/FluentUI3Style/fluentui3style/fluentui3style.pri)
+    # 内嵌样式库在 Qt 6.9+ 漏引入外观声明，由工程补齐而不改第三方源码。
+    greaterThan(QT_MINOR_VERSION, 8) {
+        SOURCES -= $$PWD/third_party/FluentUI3Style/fluentui3style/fluentui3style.cpp
+        SOURCES += $$PWD/fluentstylecompat.cpp
+    }
 }
 
 # MSVC：源码含中文/UTF-8 注释与字符串，必须按 UTF-8 解析，否则乱码或报错
@@ -50,7 +55,11 @@ SOURCES += \
         ledlayoutengine.cpp \
         layergenerator.cpp \
         progressiverendercontroller.cpp \
-        progressiverenderutils.cpp
+        progressiverenderutils.cpp \
+        regionmodel.cpp \
+        regionselection.cpp \
+        regionslider.cpp \
+        mainwindowregions.cpp
 
 HEADERS += \
         mainwindow.h \
@@ -62,7 +71,10 @@ HEADERS += \
         layergenerator.h \
         ledstrip.h \
         progressiverendercontroller.h \
-        progressiverenderutils.h
+        progressiverenderutils.h \
+        regionmodel.h \
+        regionselection.h \
+        regionslider.h
 
 FORMS += \
         mainwindow.ui

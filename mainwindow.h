@@ -23,6 +23,14 @@ class QMenu;
 #include "ledlayoutengine.h"
 #include "layergenerator.h"
 #include "progressiverendercontroller.h"
+#include "regionmodel.h"
+#include "regionselection.h"
+#include <QPointer>
+#include <memory>
+class QListWidget;
+class RegionSlider;
+class QVBoxLayout;
+class QScrollArea;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -38,7 +46,6 @@ public:
     MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
     bool eventFilter(QObject *obj, QEvent *event) override;
-    void showWelcomeDialog(); // 启动欢迎弹窗（main.cpp 调用）
 protected:
     void resizeEvent(QResizeEvent *event) override;
 
@@ -56,7 +63,31 @@ private slots:
     void resetAllSettings();
 
 private:
+    friend class RegionTests;
     void setupUI();
+    void updateControlWidth();
+    void setupRegionUI(QVBoxLayout* layout);
+    void refreshRegionUI();
+    Regions::Parameters globalRegionParameters() const;
+    void setGlobalRegionParameters(const Regions::Parameters& values);
+    void trackGlobalRegionSlider(QSlider* slider);
+    void beginRegionSlider(QSlider* slider);
+    void endRegionSlider(QSlider* slider);
+    void undoRegionChange(bool redo);
+    void cancelRegionGesture();
+    void setRegionEditing(bool enabled);
+    void setRegionTool(Regions::Tool tool);
+    void selectRegion(quint32 id);
+    void startRegionSelection(const QPoint& point, Regions::Operation operation, const QPainterPath* geometry = nullptr);
+    bool handleRegionEvent(QLabel* label, QEvent* event);
+    bool regionPoint(QLabel* label, const QPointF& point, QPointF& result, bool outside = false) const;
+    void updateGesturePath();
+    void refreshRegionPreviews();
+    void scheduleRegionOverlay();
+    void paintRegionOverlay(QPainter& painter, const QRectF& target);
+    QJsonObject projectArgs() const;
+    bool validateProjectArgs(const QJsonObject& root, const QSize& size, QVector<Regions::Region>& regions) const;
+    void applyProjectArgs(const QJsonObject& root, const QVector<Regions::Region>& regions);
 
     /**
      * @brief 按指定阶段尺寸生成预览，并在完整分辨率阶段更新导出数据
@@ -114,6 +145,36 @@ private:
 
     QMap<QLabel*, QString> m_layerPreviewKeys;
     QMap<QLabel*, PreviewState> m_layerPreviewStates;
+
+    Regions::Model m_regions;
+    Regions::Tool m_regionTool = Regions::Tool::Select;
+    Regions::Operation m_gestureOperation = Regions::Operation::New;
+    bool m_regionEditing = false, m_regionUIReady = false, m_gestureActive = false;
+    QScrollArea* m_controlScroll = nullptr;
+    bool m_controlWidthQueued = false;
+    bool m_regionSelectPanning = false, m_regionSelectDragged = false, m_overlayQueued = false;
+    QPoint m_regionPressPos;
+    QPointer<QLabel> m_regionPressLabel;
+    Qt::MouseButton m_regionStartButton = Qt::NoButton;
+    QVector<QPointF> m_gesturePoints;
+    QPainterPath m_gesturePath;
+    QPointer<Regions::SelectionJob> m_regionJob;
+    std::unique_ptr<Regions::Snapshot> m_sliderBefore;
+    QPointer<QSlider> m_historySlider;
+    Regions::Parameters m_knownGlobals;
+    std::array<QSlider*, Regions::ParameterCount> m_globalRegionSliders{{nullptr}};
+    std::array<RegionSlider*, Regions::ParameterCount> m_localRegionSliders{{nullptr}};
+    std::array<QWidget*, Regions::ParameterCount> m_localRegionRows{{nullptr}};
+    QWidget *m_regionContent = nullptr, *m_localRegionGroup = nullptr;
+    QWidget *m_regionBrushControls = nullptr, *m_regionWandControls = nullptr;
+    QCheckBox *m_regionEnabled = nullptr, *m_regionHighlight = nullptr, *m_wandGlobal = nullptr;
+    QListWidget* m_regionList = nullptr;
+    QComboBox* m_regionOperation = nullptr;
+    QSlider *m_regionBrushSize = nullptr, *m_wandTolerance = nullptr;
+    QLabel* m_regionBusy = nullptr;
+    QComboBox* m_regionToolCombo = nullptr;
+    QPushButton *m_regionRename = nullptr, *m_regionDelete = nullptr, *m_regionReset = nullptr;
+    QPushButton *m_regionCopy = nullptr, *m_regionUndo = nullptr, *m_regionRedo = nullptr;
 
     // UI 组件
     QLabel *l_copper, *l_mask, *l_silk, *l_bottom, *l_composite;

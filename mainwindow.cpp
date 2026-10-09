@@ -49,6 +49,8 @@
 #include <QColorDialog>
 #include <cmath>
 #include <QDebug>
+#include <QSet>
+#include <QUuid>
 
 namespace {
 static QRectF calcPreviewRect(const QSize& labelSize, const QSize& imageSize, double zoom, const QPointF& pan) {
@@ -161,6 +163,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 }
 
 MainWindow::~MainWindow() {
+    cancelRegionGesture();
     if (m_tempReloadTimer) m_tempReloadTimer->stop();
     cleanupTempImages();
     // 改动：退出时删除本实例专属的临时目录（temp/<PID>/）。
@@ -186,7 +189,7 @@ void MainWindow::setupUI() {
     l_composite->setStyleSheet("QLabel { background-color: #232323; border-radius: 10px; }");
     l_composite->installEventFilter(this);
 
-    leftLayout->addWidget(new QLabel("<b>【预览区】支持中建或右键拖动缩放（滚轮），左键点击画面手动布灯</b>"));
+    leftLayout->addWidget(new QLabel("<b>【预览区】滚轮缩放，中键/右键平移；区域编辑关闭时左键布灯</b>"));
     leftLayout->addWidget(l_composite, 5); // 权重分配
 
     // --- 中间：控制台 ---
@@ -196,7 +199,7 @@ void MainWindow::setupUI() {
 
     ctrl->addWidget(new QLabel("<b>核心参数控制</b>"));
 
-    QGroupBox *group_basic = new QGroupBox("基础参数");
+    QGroupBox *group_basic = new QGroupBox("基础参数：全局");
     // 内容包进容器，便于整块收起/展开动画
     QWidget *basicContent = new QWidget(group_basic);
     QVBoxLayout *basicContentLayout = new QVBoxLayout(basicContent);
@@ -408,6 +411,8 @@ void MainWindow::setupUI() {
     });
     updateEdgeControlState();
 
+    setupRegionUI(ctrl);
+
     QGroupBox *group_actions = new QGroupBox("图纸操作");
     // 内容包进容器，便于整块收起/展开动画
     QWidget *actionsContent = new QWidget(group_actions);
@@ -487,6 +492,9 @@ void MainWindow::setupUI() {
     ctrlScroll->setWidget(ctrlContainer);
     ctrlScroll->setFrameShape(QFrame::NoFrame);
     ctrlScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_controlScroll = ctrlScroll;
+    ctrlScroll->installEventFilter(this); ctrlContainer->installEventFilter(this);
+    updateControlWidth();
     QScroller::grabGesture(ctrlScroll->viewport(), QScroller::TouchGesture); // 触摸屏/触控板拖拽滚动
     mainLayout->addWidget(ctrlScroll, 1);
     mainLayout->addWidget(rightPanel, 3);
@@ -544,7 +552,7 @@ void MainWindow::setupUI() {
     QAction *colorAction = optionMenu->addAction("颜色设置...");
     connect(colorAction, &QAction::triggered, this, &MainWindow::openColorSettingsDialog);
 
-    // 重置所有本地设置（界面缩放 / 开屏提示 / 自定义色值）
+    // 重置所有本地设置（界面缩放 / 自定义色值）
     QAction *resetAction = optionMenu->addAction("重置所有设置...");
     connect(resetAction, &QAction::triggered, this, &MainWindow::resetAllSettings);
 }
@@ -600,75 +608,6 @@ void MainWindow::toggleContent(QWidget *content, bool expand, bool horizontal) {
         });
         m_collapseAnims.insert(content, anim);
         anim->start();
-    }
-}
-
-void MainWindow::showWelcomeDialog() {
-    // 用户勾选过"以后不再出现"则跳过
-    QSettings settings;
-    if (!settings.value(QStringLiteral("ui/showWelcome"), true).toBool()) return;
-
-    QDialog dlg(this);
-    dlg.setWindowTitle(QStringLiteral("欢迎使用 PCB_lightgraph"));
-    dlg.setModal(true);
-    dlg.setMinimumWidth(680);
-
-    QHBoxLayout *mainLay = new QHBoxLayout(&dlg);
-    mainLay->setSpacing(20);
-    mainLay->setContentsMargins(20, 20, 20, 16);
-
-    // 左侧：高清 logo
-    QLabel *logoLabel = new QLabel(&dlg);
-    QPixmap logo(QStringLiteral(":/icons/logo_rounded.png"));
-    if (!logo.isNull()) {
-        logoLabel->setPixmap(logo.scaled(240, 240, Qt::KeepAspectRatio, Qt::SmoothTransformation));
-    }
-    logoLabel->setAlignment(Qt::AlignCenter);
-    mainLay->addWidget(logoLabel, 1);
-
-    // 右侧：标题 + 简洁教程 + 特性
-    QVBoxLayout *rightLay = new QVBoxLayout;
-    rightLay->setSpacing(8);
-
-    QLabel *titleLabel = new QLabel(QStringLiteral("<b style='font-size:16px;'>PCB_lightgraph</b>"), &dlg);
-    rightLay->addWidget(titleLabel);
-
-    QLabel *guideLabel = new QLabel(QStringLiteral(
-        "<b>快速上手：</b><br>"
-        "① 点击「导入图纸」选择 PCB 照片<br>"
-        "② 按需展开分组调整参数<br>"
-        "③ 点击「导出图纸」生成分层生产图纸<br><br>"
-        "<b>画图实时编辑：</b><br>"
-        "菜单栏 File →「画图实时编辑」打开画图，可自由裁剪、修补，<br>"
-        "按 <b>Ctrl+S</b> 保存后自动实时同步到预览。<br><br>"
-        "<b>特性一览：</b><br>"
-        "• 自动重心布灯 / 灯光叠加预览<br>"
-        "• 边缘操作：描边 / 边缘增强 / 金属勾线<br>"
-        "• 参数分组点击标题即可展开/收起<br>"
-        "• Option → 界面缩放，适配不同屏幕"), &dlg);
-    guideLabel->setTextFormat(Qt::RichText);
-    guideLabel->setWordWrap(true);
-    rightLay->addWidget(guideLabel);
-    rightLay->addStretch();
-
-    // 底部：以后不再出现 + 开始使用
-    QHBoxLayout *bottomLay = new QHBoxLayout;
-    QCheckBox *dontShow = new QCheckBox(QStringLiteral("以后不再出现"), &dlg);
-    bottomLay->addWidget(dontShow);
-    bottomLay->addStretch();
-    QPushButton *okBtn = new QPushButton(QStringLiteral("开始使用"), &dlg);
-    okBtn->setProperty("accent", true);
-    okBtn->setMinimumWidth(110);
-    bottomLay->addWidget(okBtn);
-    rightLay->addLayout(bottomLay);
-
-    mainLay->addLayout(rightLay, 2);
-
-    connect(okBtn, &QPushButton::clicked, &dlg, &QDialog::accept);
-    dlg.exec();
-    // 无论以何种方式关闭，勾选过"以后不再出现"就持久化跳过
-    if (dontShow->isChecked()) {
-        settings.setValue(QStringLiteral("ui/showWelcome"), false);
     }
 }
 
@@ -813,11 +752,11 @@ void MainWindow::resetAllSettings() {
     const QMessageBox::StandardButton ret = QMessageBox::question(
         this,
         QStringLiteral("重置所有设置"),
-        QStringLiteral("将清除所有本地设置（界面缩放、开屏提示、自定义色值）并恢复默认值。\n\n确定继续吗？"),
+        QStringLiteral("将清除所有本地设置（界面缩放、自定义色值）并恢复默认值。\n\n确定继续吗？"),
         QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
     if (ret != QMessageBox::Yes) return;
 
-    // 清空 QSettings 全部键（界面缩放 / 开屏提示 / 自定义色值）
+    // 清空 QSettings 全部键（界面缩放 / 自定义色值）
     QSettings s;
     s.remove(QString());
 
@@ -850,18 +789,22 @@ void MainWindow::resetAllSettings() {
     if (!m_origin.isNull()) updateProcess();
 
     QMessageBox::information(this, QStringLiteral("重置完成"),
-        QStringLiteral("所有设置已恢复默认（开屏提示将在下次启动时重新出现）。"));
+        QStringLiteral("所有本地设置已恢复默认。"));
 }
 
 QSlider* MainWindow::createSlider(QString title, int min, int max, int def, QVBoxLayout* layout) {
     QLabel *lbl = new QLabel(QString("%1: %2").arg(title).arg(def));
+    lbl->setWordWrap(true);
     QSlider* s = new QSlider(Qt::Horizontal);
+    s->setProperty("valueLabel", QVariant::fromValue(lbl));
     s->setRange(min, max);
     s->setValue(def);
     layout->addWidget(lbl);
     layout->addWidget(s);
     connect(s, &QSlider::valueChanged, [=](int v){
         lbl->setText(QString("%1: %2").arg(title).arg(v));
+        if (m_isApplyingArgs) return;
+        trackGlobalRegionSlider(s);
         if (m_origin.isNull()) {
             updateProcess();
         } else if (s->isSliderDown()) {
@@ -871,12 +814,14 @@ QSlider* MainWindow::createSlider(QString title, int min, int max, int def, QVBo
             updateProcess();
         }
     });
-    connect(s, &QSlider::sliderPressed, this, [this]() {
+    connect(s, &QSlider::sliderPressed, this, [this, s]() {
+        beginRegionSlider(s);
         if (!m_origin.isNull()) {
             m_progressiveRenderController.sliderPressed(m_origin.size());
         }
     });
-    connect(s, &QSlider::sliderReleased, this, [this]() {
+    connect(s, &QSlider::sliderReleased, this, [this, s]() {
+        endRegionSlider(s);
         if (!m_origin.isNull()) {
             // 松手后不等待固定延迟，按图片大小选择是否经过中间细化再恢复原图。
             m_progressiveRenderController.sliderReleased(m_origin.size());
@@ -886,6 +831,8 @@ QSlider* MainWindow::createSlider(QString title, int min, int max, int def, QVBo
 }
 
 void MainWindow::updateProcess() {
+    if (m_isApplyingArgs) return;
+    refreshRegionUI();
     if (m_origin.isNull()) {
         if (!m_isApplyingArgs) syncArgsToJson();
         return;
@@ -974,17 +921,15 @@ void MainWindow::renderAtSize(const QSize& targetSize, quint64 generation, bool 
     // 使用 ImageProcessor 处理图像
     QImage imgCopper, imgMask, imgSilk, imgBottom, imgComp;
 
-    // 边缘掩码必须与当前预览分辨率一致，后续像素覆盖才不会错位。
-    QImage edgeMask;
-    if (check_edgeEnable && check_edgeEnable->isChecked()) {
-        edgeMask = m_edgeSharpener.buildEdgeMaskForImage(
-            renderOrigin,
-            edgeMode,
-            s_edgeThresh->value(),
-            s_edgeThreshMax->value(),
-            m_edgePrefilterEnabled,
-            m_edgePrefilterKernelSize,
-            m_edgePrefilterSigma);
+    Regions::RenderContext regionContext;
+    const Regions::Parameters globals = globalRegionParameters();
+    const bool regional = m_regions.hasOffsets();
+    regionContext.parameters.insert(0, globals);
+    if (regional) {
+        regionContext.owners = m_regions.owners(renderOrigin.size());
+        regionContext.revision = m_regions.revision;
+        for (const Regions::Region& region : m_regions.items)
+            regionContext.parameters.insert(region.id, Regions::effective(globals, region));
     }
 
     m_imageProcessor.processImage(
@@ -1008,63 +953,74 @@ void MainWindow::renderAtSize(const QSize& targetSize, quint64 generation, bool 
         imgBottom,
         imgComp,
         renderLedStrips,
-        false // 保持基础合成图干净，灯光由下方的 LED 布局引擎统一叠加。
+        false,
+        regional ? &regionContext : nullptr
     );
 
-    // 若存在边缘掩码：
-    if (!edgeMask.isNull()) {
-        int w = qMin(edgeMask.width(), imgCopper.width());
-        int h = qMin(edgeMask.height(), imgCopper.height());
-        const QColor silkColor = m_imageProcessor.getSilkColor(maskColorName);
-
-        if (useMetalEdge) {
-            // 将边缘反映或作为预览遮罩颜色覆盖（若未选择裸露铜则用浅色阻焊预览）
-            QRgb metalRgb = metalEdgeColor.rgb();
-            QColor maskColor = m_imageProcessor.getSolderMaskColor(maskColorName);
-            QRgb previewMaskLight = maskColor.lighter(135).rgb();
-            auto blendRgb = [](QRgb base, QRgb top, int topWeight255) -> QRgb {
-                int baseWeight255 = 255 - topWeight255;
-                return qRgb(
-                    (qRed(base) * baseWeight255 + qRed(top) * topWeight255) / 255,
-                    (qGreen(base) * baseWeight255 + qGreen(top) * topWeight255) / 255,
-                    (qBlue(base) * baseWeight255 + qBlue(top) * topWeight255) / 255);
+    if (check_edgeEnable && check_edgeEnable->isChecked()) {
+        QMap<QPair<int, int>, QSet<quint32>> groups;
+        for (auto it = regionContext.parameters.constBegin(); it != regionContext.parameters.constEnd(); ++it)
+            groups[qMakePair(it.value()[Regions::EdgeMin], it.value()[Regions::EdgeMax])].insert(it.key());
+        // 完整图像上下文计算边缘，仅限制写入归属，避免区域边界产生假轮廓。
+        for (auto group = groups.constBegin(); group != groups.constEnd(); ++group) {
+            const QImage edgeMask = m_edgeSharpener.buildEdgeMaskForImage(renderOrigin, edgeMode,
+                group.key().first, group.key().second, m_edgePrefilterEnabled, m_edgePrefilterKernelSize, m_edgePrefilterSigma);
+            auto belongs = [&](int x, int y) {
+                return !regional || group.value().contains(regionContext.owners[y * renderOrigin.width() + x]);
             };
-            for (int y = 0; y < h; ++y) {
-                const uchar* em = (const uchar*)edgeMask.constScanLine(y);
-                QRgb *lineCopper = (QRgb*)imgCopper.scanLine(y);
-                QRgb *lineMask = (QRgb*)imgMask.scanLine(y);
-                QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
-                QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
-                for (int x = 0; x < w; ++x) {
-                    if (em[x] > 0) {
-                        // 金属勾线始终要反映到铜层
-                        lineCopper[x] = 0xFFFFFFFF;
+            int w = qMin(edgeMask.width(), imgCopper.width());
+            int h = qMin(edgeMask.height(), imgCopper.height());
+            const QColor silkColor = m_imageProcessor.getSilkColor(maskColorName);
 
-                        // 仅在“裸露金属勾线”被选中时改变阻焊/丝印
-                        if (check_exposeMetalEdge && check_exposeMetalEdge->isChecked()) {
-                            lineSilk[x] = 0xFF000000; // 移除该位置的丝印
-                            lineMask[x] = 0xFFFFFFFF; // 阻焊开窗以露出铜
-                            // 露铜预览使用金属颜色
-                            lineComp[x] = metalRgb;
-                        } else {
-                            // 未露铜：沿用“敷铜层较深”相同的浅色阻焊混合方式
-                            lineComp[x] = blendRgb(lineComp[x], previewMaskLight, 170);
+            if (useMetalEdge) {
+                // 将边缘反映或作为预览遮罩颜色覆盖（若未选择裸露铜则用浅色阻焊预览）
+                QRgb metalRgb = metalEdgeColor.rgb();
+                QColor maskColor = m_imageProcessor.getSolderMaskColor(maskColorName);
+                QRgb previewMaskLight = maskColor.lighter(135).rgb();
+                auto blendRgb = [](QRgb base, QRgb top, int topWeight255) -> QRgb {
+                    int baseWeight255 = 255 - topWeight255;
+                    return qRgb(
+                        (qRed(base) * baseWeight255 + qRed(top) * topWeight255) / 255,
+                        (qGreen(base) * baseWeight255 + qGreen(top) * topWeight255) / 255,
+                        (qBlue(base) * baseWeight255 + qBlue(top) * topWeight255) / 255);
+                };
+                for (int y = 0; y < h; ++y) {
+                    const uchar* em = (const uchar*)edgeMask.constScanLine(y);
+                    QRgb *lineCopper = (QRgb*)imgCopper.scanLine(y);
+                    QRgb *lineMask = (QRgb*)imgMask.scanLine(y);
+                    QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
+                    QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
+                    for (int x = 0; x < w; ++x) {
+                        if (em[x] > 0 && belongs(x, y)) {
+                            // 金属勾线始终要反映到铜层
+                            lineCopper[x] = 0xFFFFFFFF;
+
+                            // 仅在“裸露金属勾线”被选中时改变阻焊/丝印
+                            if (check_exposeMetalEdge && check_exposeMetalEdge->isChecked()) {
+                                lineSilk[x] = 0xFF000000; // 移除该位置的丝印
+                                lineMask[x] = 0xFFFFFFFF; // 阻焊开窗以露出铜
+                                // 露铜预览使用金属颜色
+                                lineComp[x] = metalRgb;
+                            } else {
+                                // 未露铜：沿用“敷铜层较深”相同的浅色阻焊混合方式
+                                lineComp[x] = blendRgb(lineComp[x], previewMaskLight, 170);
+                            }
                         }
                     }
                 }
-            }
-        } else {
-            // 将边缘作为丝印覆盖到 imgSilk 和 imgComp（避免被判为金属）
-            int w2 = qMin(edgeMask.width(), imgSilk.width());
-            int h2 = qMin(edgeMask.height(), imgSilk.height());
-            for (int y = 0; y < h2; ++y) {
-                const uchar* em = (const uchar*)edgeMask.constScanLine(y);
-                QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
-                QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
-                for (int x = 0; x < w2; ++x) {
-                    if (em[x] > 0) {
-                        lineSilk[x] = 0xFFFFFFFF;
-                        lineComp[x] = silkColor.rgb();
+            } else {
+                // 将边缘作为丝印覆盖到 imgSilk 和 imgComp（避免被判为金属）
+                int w2 = qMin(edgeMask.width(), imgSilk.width());
+                int h2 = qMin(edgeMask.height(), imgSilk.height());
+                for (int y = 0; y < h2; ++y) {
+                    const uchar* em = (const uchar*)edgeMask.constScanLine(y);
+                    QRgb *lineSilk = (QRgb*)imgSilk.scanLine(y);
+                    QRgb *lineComp = (QRgb*)imgComp.scanLine(y);
+                    for (int x = 0; x < w2; ++x) {
+                        if (em[x] > 0 && belongs(x, y)) {
+                            lineSilk[x] = 0xFFFFFFFF;
+                            lineComp[x] = silkColor.rgb();
+                        }
                     }
                 }
             }
@@ -1138,6 +1094,7 @@ void MainWindow::updateLayerPreview(QLabel* label, const QImage& img, PreviewSta
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     painter.drawImage(targetRect, img);
+    paintRegionOverlay(painter, targetRect);
     painter.end();
 
     label->setPixmap(canvas);
@@ -1173,6 +1130,7 @@ void MainWindow::updateCompositePreview(const QImage& img) {
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     painter.drawImage(targetRect, img);
+    paintRegionOverlay(painter, targetRect);
     painter.end();
 
     l_composite->setPixmap(canvas);
@@ -1388,6 +1346,15 @@ bool MainWindow::handleLayerPreviewEvent(QLabel* label, QEvent* event, const QIm
 }
 
 bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
+    if (m_controlScroll && (obj == m_controlScroll || obj == m_controlScroll->widget()) &&
+        (event->type() == QEvent::FontChange || event->type() == QEvent::ApplicationFontChange || event->type() == QEvent::LayoutRequest) && !m_controlWidthQueued) {
+        m_controlWidthQueued = true;
+        QTimer::singleShot(0, this, [this]() { m_controlWidthQueued = false; updateControlWidth(); });
+    }
+    if (obj == this && event->type() == QEvent::WindowDeactivate) cancelRegionGesture();
+    if (QLabel* label = qobject_cast<QLabel*>(obj)) {
+        if ((label == l_composite || m_layerPreviewKeys.contains(label)) && handleRegionEvent(label, event)) return true;
+    }
     // 可折叠分组框：点击标题区展开/收起（带动画）
     if (event->type() == QEvent::MouseButtonPress) {
         QGroupBox *gb = qobject_cast<QGroupBox*>(obj);
@@ -1623,7 +1590,13 @@ bool MainWindow::loadImageFromPath(const QString& filePath, bool alreadyInTemp) 
         return false;
     }
 
+    cancelRegionGesture(); m_sliderBefore.reset(); m_historySlider.clear();
+    const bool preserveRegions = alreadyInTemp && loaded.size() == m_origin.size();
+    const bool changedRegionSize = alreadyInTemp && !preserveRegions && !m_regions.items.isEmpty();
+    if (preserveRegions) { m_regions.clearHistory(); ++m_regions.revision; }
+    else m_regions.clear(loaded.size());
     m_origin = loaded.convertToFormat(QImage::Format_RGB32);
+    if (changedRegionSize) QMessageBox::information(this, QStringLiteral("区域已清空"), QStringLiteral("图片尺寸改变，已清空区域与局部调整。"));
     // 源图更换后立即作废旧缩放缓存，避免残留上一张图的预览输入导致串图。
     m_cachedRenderOrigin = QImage();
     m_cachedRenderOriginSourceKey = 0;
@@ -1698,11 +1671,9 @@ QString MainWindow::resolveCurrentTempImagePath() const {
     return QString();
 }
 
-void MainWindow::syncArgsToJson() {
-    initTempWorkspace();
-
+QJsonObject MainWindow::projectArgs() const {
     QJsonObject root;
-    root["schemaVersion"] = 1;
+    root["schemaVersion"] = 2;
 
     QJsonObject controls;
     controls["surfaceFinishIndex"] = combo_surfaceFinish ? combo_surfaceFinish->currentIndex() : 0;
@@ -1763,22 +1734,33 @@ void MainWindow::syncArgsToJson() {
         root["imageFileName"] = QFileInfo(m_tempImagePath).fileName();
     }
 
-    QSaveFile sf(m_tempArgsPath);
-    if (!sf.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
-    sf.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
-    sf.commit();
+    if (!m_regions.items.isEmpty()) root["regions"] = m_regions.toJson();
+    return root;
+}
+
+void MainWindow::syncArgsToJson() {
+    initTempWorkspace();
+    QSaveFile file(m_tempArgsPath);
+    if (!file.open(QIODevice::WriteOnly)) return;
+    file.write(QJsonDocument(projectArgs()).toJson(QJsonDocument::Indented));
+    file.commit();
 }
 
 bool MainWindow::loadArgsFromJson(const QString& argsPath) {
-    QFile f(argsPath);
-    if (!f.open(QIODevice::ReadOnly)) return false;
+    QFile file(argsPath);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    QVector<Regions::Region> regions;
+    if (error.error != QJsonParseError::NoError || !document.isObject() ||
+        !validateProjectArgs(document.object(), m_origin.size(), regions)) return false;
+    applyProjectArgs(document.object(), regions);
+    return true;
+}
 
-    QJsonParseError err;
-    const QJsonDocument doc = QJsonDocument::fromJson(f.readAll(), &err);
-    f.close();
-    if (err.error != QJsonParseError::NoError || !doc.isObject()) return false;
-
-    const QJsonObject root = doc.object();
+void MainWindow::applyProjectArgs(const QJsonObject& root, const QVector<Regions::Region>& regions) {
+    cancelRegionGesture();
+    m_sliderBefore.reset(); m_historySlider.clear();
     const QJsonObject controls = root.value("controls").toObject();
     const QJsonObject experimental = root.value("experimental").toObject();
 
@@ -1787,6 +1769,8 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
         const int clamped = qBound(s->minimum(), value, s->maximum());
         QSignalBlocker blocker(s);
         s->setValue(clamped);
+        if (QLabel* label = s->property("valueLabel").value<QLabel*>())
+            label->setText(label->text().section(':', 0, 0) + QString(": %1").arg(clamped));
     };
     // setCheck intentionally emits the toggled() signal so UI detail panels update when loading projects
     auto setCheck = [](QCheckBox* c, bool checked) {
@@ -1805,21 +1789,6 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
         QSignalBlocker blocker(c);
         c->setCurrentIndex(i);
     };
-
-    // 检查 controls 中是否包含预期的键；若缺少则提示但仍尝试加载（兼容旧版本）
-    QStringList expectedKeys = {
-        "surfaceFinishIndex","maskColorIndex","goldThresh","silkThresh","transThresh","copperDepth",
-        "lightEnable","showLEDOverlay","autoSense","ledRadius","ledIntensity",
-        "bareSubstrateEnable","bareSubstrateGrayMode","bareSubstrateGrayA","bareSubstrateGrayB","bareSubstrateColorSimilarity",
-        "edgeEnable","edgeMode","edgeThreshMin","edgeThreshMax","autoInvert","useMetalEdge","exposeMetalEdge"
-    };
-    bool missingKey = false;
-    for (const QString &k : expectedKeys) {
-        if (!controls.contains(k)) { missingKey = true; break; }
-    }
-    if (missingKey) {
-        QMessageBox::warning(this, "提示", QStringLiteral("本项目文件为旧版本或已损坏，将尝试加载"));
-    }
 
     m_isApplyingArgs = true;
 
@@ -1880,36 +1849,26 @@ bool MainWindow::loadArgsFromJson(const QString& argsPath) {
         m_ledStrips.append(s);
     }
 
+    m_regions.clear(m_origin.size()); m_regions.items = regions;
+    m_knownGlobals = globalRegionParameters();
     m_isApplyingArgs = false;
-    updateProcess();
-    return true;
+    refreshRegionUI(); updateProcess();
 }
 
 bool MainWindow::saveProjectToBlg(const QString& blgPath) {
     initTempWorkspace();
     syncArgsToJson();
 
-    QString sourceImagePath = m_tempImagePath;
-    if (sourceImagePath.isEmpty() || !QFile::exists(sourceImagePath)) {
-        QDirIterator it(m_tempDirPath, QDir::Files, QDirIterator::NoIteratorFlags);
-        while (it.hasNext()) {
-            const QString p = it.next();
-            if (isSupportedImageExtension(QFileInfo(p).suffix().toLower())) {
-                sourceImagePath = p;
-                break;
-            }
-        }
-    }
-    if (sourceImagePath.isEmpty() || !QFile::exists(sourceImagePath)) return false;
-    if (!QFile::exists(m_tempArgsPath)) return false;
-
+    if (m_origin.isNull()) return false;
     QTemporaryDir stageDir;
     if (!stageDir.isValid()) return false;
-
-    const QString stageImagePath = QDir(stageDir.path()).filePath(QFileInfo(sourceImagePath).fileName());
+    const QString stageImagePath = QDir(stageDir.path()).filePath("source.png");
     const QString stageArgsPath = QDir(stageDir.path()).filePath("args.json");
-    if (!QFile::copy(sourceImagePath, stageImagePath)) return false;
-    if (!QFile::copy(m_tempArgsPath, stageArgsPath)) return false;
+    if (!m_origin.save(stageImagePath, "PNG")) return false;
+    QJsonObject args = projectArgs(); args["imageFileName"] = "source.png";
+    QSaveFile file(stageArgsPath);
+    if (!file.open(QIODevice::WriteOnly)) return false;
+    if (file.write(QJsonDocument(args).toJson()) < 0 || !file.commit()) return false;
 
     const QString zipTempPath = QDir(stageDir.path()).filePath("project.zip");
     if (QFile::exists(zipTempPath)) QFile::remove(zipTempPath);
@@ -1924,8 +1883,12 @@ bool MainWindow::saveProjectToBlg(const QString& blgPath) {
         return false;
     }
 
-    if (QFile::exists(blgPath)) QFile::remove(blgPath);
-    return QFile::copy(zipTempPath, blgPath);
+    QFile zip(zipTempPath);
+    if (!zip.open(QIODevice::ReadOnly)) return false;
+    const QByteArray bytes = zip.readAll();
+    QSaveFile destination(blgPath);
+    if (!destination.open(QIODevice::WriteOnly) || destination.write(bytes) != bytes.size()) return false;
+    return destination.commit();
 }
 
 bool MainWindow::importProjectFromBlg(const QString& blgPath) {
@@ -1952,7 +1915,7 @@ bool MainWindow::importProjectFromBlg(const QString& blgPath) {
         return false;
     }
 
-    QString extractedImagePath;
+    QStringList extractedImages;
     QString extractedArgsPath;
     QDirIterator it(extractRoot, QDir::Files, QDirIterator::Subdirectories);
     while (it.hasNext()) {
@@ -1960,25 +1923,62 @@ bool MainWindow::importProjectFromBlg(const QString& blgPath) {
         const QFileInfo fi(p);
         const QString nameLower = fi.fileName().toLower();
         if (nameLower == "args.json") {
+            if (!extractedArgsPath.isEmpty()) return false;
             extractedArgsPath = p;
             continue;
         }
-        if (isSupportedImageExtension(fi.suffix().toLower()) && extractedImagePath.isEmpty()) {
-            extractedImagePath = p;
+        if (isSupportedImageExtension(fi.suffix().toLower())) extractedImages.append(p);
+    }
+
+    if (extractedImages.isEmpty() || extractedArgsPath.isEmpty()) return false;
+    QFile argsFile(extractedArgsPath);
+    if (!argsFile.open(QIODevice::ReadOnly)) return false;
+    QJsonParseError parseError;
+    const QJsonDocument document = QJsonDocument::fromJson(argsFile.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) return false;
+    const QJsonObject root = document.object();
+    QString extractedImagePath;
+    if (root.contains("imageFileName")) {
+        if (!root["imageFileName"].isString()) return false;
+        const QString imageName = root["imageFileName"].toString();
+        if (imageName.isEmpty() || imageName.contains('/') || imageName.contains('\\')) return false;
+        for (const QString& path : extractedImages) {
+            if (QFileInfo(path).fileName().compare(imageName, Qt::CaseInsensitive) != 0) continue;
+            if (!extractedImagePath.isEmpty()) return false;
+            extractedImagePath = path;
         }
+    } else if (extractedImages.size() == 1) {
+        extractedImagePath = extractedImages.first();
     }
-
-    if (extractedImagePath.isEmpty() || extractedArgsPath.isEmpty()) return false;
-    if (!loadImageFromPath(extractedImagePath, false)) return false;
-
-    if (QFile::exists(m_tempArgsPath)) QFile::remove(m_tempArgsPath);
-    if (!QFile::copy(extractedArgsPath, m_tempArgsPath)) return false;
-    const bool ok = loadArgsFromJson(m_tempArgsPath);
-    if (ok && !m_tempImagePath.isEmpty()) {
-        m_tempImageMTimeMs = fileStampMs(QFileInfo(m_tempImagePath));
-        m_tempImageSize = QFileInfo(m_tempImagePath).size();
+    if (extractedImagePath.isEmpty()) return false;
+    QImageReader reader(extractedImagePath); reader.setAutoTransform(true);
+    const QSize rawSize = reader.size();
+    if (qint64(rawSize.width()) * rawSize.height() >= getMaxImportPixels()) {
+        if (root.contains("regions")) {
+            QMessageBox::warning(this, QStringLiteral("导入失败"), QStringLiteral("含区域的工程超过像素上限，不能自动缩放。"));
+            return false;
+        }
+        reader.setScaledSize(scaleDownToPixelLimit(rawSize, getMaxImportPixels()));
     }
-    return ok;
+    QImage loaded = reader.read().convertToFormat(QImage::Format_RGB32);
+    QVector<Regions::Region> regions;
+    if (loaded.isNull() || !validateProjectArgs(root, loaded.size(), regions)) return false;
+
+    // 解码和校验完成后才准备替换，失败不删除当前临时源图。
+    const QString target = QDir(m_tempDirPath).filePath("source_" + QUuid::createUuid().toString(QUuid::WithoutBraces) + ".png");
+    if (!loaded.save(target, "PNG")) return false;
+    QJsonObject applied = root; applied["imageFileName"] = QFileInfo(target).fileName();
+    QSaveFile file(m_tempArgsPath);
+    if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(applied).toJson()) < 0 || !file.commit()) {
+        QFile::remove(target); return false;
+    }
+    m_origin = loaded; m_cachedRenderOrigin = QImage(); m_cachedRenderOriginSourceKey = 0;
+    m_tempImagePath = target; m_previewZoom = 1; m_previewPan = QPointF(); m_isPlacing = false; m_isPanningPreview = false;
+    btn_export->setEnabled(true); if (action_exportLayers) action_exportLayers->setEnabled(true);
+    applyProjectArgs(applied, regions);
+    cleanupTempImages(target);
+    m_tempImageMTimeMs = fileStampMs(QFileInfo(target)); m_tempImageSize = QFileInfo(target).size();
+    return true;
 }
 
 void MainWindow::checkTempImageUpdated() {

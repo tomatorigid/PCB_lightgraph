@@ -7,6 +7,7 @@
 #include <QVector>
 #include <QPoint>
 #include "ledstrip.h"
+#include "regionmodel.h"
 
 /**
  * @brief 图像处理核心类
@@ -41,7 +42,8 @@ public:
         QImage& outBottom,
         QImage& outComposite,
         const QVector<LEDStrip>& ledStrips,
-        bool renderLEDs = true
+        bool renderLEDs = true,
+        const Regions::RenderContext* regions = nullptr
     );
 
     /**
@@ -137,7 +139,8 @@ private:
         QImage& outMask,
         QImage& outSilk,
         QImage& outBottom,
-        QImage& outCompositeBase) const;
+        QImage& outCompositeBase,
+        const Regions::RenderContext* regions = nullptr) const;
 
     bool isBaseCacheValid(
         const QImage& srcImage,
@@ -176,6 +179,8 @@ private:
 
     // 基础层缓存：只要源图和参数不变，就不重复计算像素分类
     qint64 m_cachedSourceKey = 0;
+    quint64 m_cachedRegionRevision = 0;
+    QColor m_cachedMaskColor, m_cachedMetalColor, m_cachedBareColor;
     int m_cachedGoldThresh = -1;
     int m_cachedSilkThresh = -1;
     int m_cachedTransThresh = -1;

@@ -1,5 +1,6 @@
 #include "imageprocessor.h"
 #include <cmath>
+#include <limits>
 #include <QPainter>
 #include <QDebug>
 
@@ -140,6 +141,9 @@ bool ImageProcessor::isBaseCacheValid(
 
     return !srcImage.isNull()
         && srcImage.cacheKey() == m_cachedSourceKey
+        && m_cachedMaskColor == getSolderMaskColor(maskColorName)
+        && m_cachedMetalColor == getMetalRenderColor(finishType)
+        && m_cachedBareColor == getBareSubstrateColor()
         && goldThresh == m_cachedGoldThresh
         && silkThresh == m_cachedSilkThresh
         && transThresh == m_cachedTransThresh
@@ -175,6 +179,9 @@ void ImageProcessor::storeBaseCache(
     const QImage& outCompositeBase) {
 
     m_cachedSourceKey = srcImage.cacheKey();
+    m_cachedMaskColor = getSolderMaskColor(maskColorName);
+    m_cachedMetalColor = getMetalRenderColor(finishType);
+    m_cachedBareColor = getBareSubstrateColor();
     m_cachedGoldThresh = goldThresh;
     m_cachedSilkThresh = silkThresh;
     m_cachedTransThresh = transThresh;
@@ -213,7 +220,8 @@ void ImageProcessor::buildBaseLayers(
     QImage& outMask,
     QImage& outSilk,
     QImage& outBottom,
-    QImage& outCompositeBase) const {
+    QImage& outCompositeBase,
+    const Regions::RenderContext* regions) const {
 
     int w = srcImage.width();
     int h = srcImage.height();
@@ -245,30 +253,47 @@ void ImageProcessor::buildBaseLayers(
         QRgb *lineComp = (QRgb *)outCompositeBase.scanLine(y);
         const QRgb *lineSrc = (const QRgb *)srcImage.constScanLine(y);
 
+        quint32 previousOwner = std::numeric_limits<quint32>::max();
+        const Regions::Parameters* local = nullptr;
         for (int x = 0; x < w; ++x) {
+            if (regions) {
+                const quint32 owner = regions->owners[y * w + x];
+                if (owner != previousOwner) {
+                    previousOwner = owner;
+                    auto it = regions->parameters.constFind(owner);
+                    local = it == regions->parameters.constEnd() ? nullptr : &it.value();
+                }
+            }
+            const int pixelGold = local ? (*local)[Regions::Gold] : goldThresh;
+            const int pixelSilk = local ? (*local)[Regions::Silk] : silkThresh;
+            const int pixelTrans = local ? (*local)[Regions::Trans] : transThresh;
+            const int pixelCopper = local ? qBound(0, (*local)[Regions::Copper], 254) : effectiveCopperThresh;
+            const int pixelBareMin = local ? qMin((*local)[Regions::BareMin], (*local)[Regions::BareMax]) : grayMinPct;
+            const int pixelBareMax = local ? qMax((*local)[Regions::BareMin], (*local)[Regions::BareMax]) : grayMaxPct;
+            const int pixelSimilarity = local ? (*local)[Regions::BareSimilarity] : similarityThreshold;
             QColor col(lineSrc[x]);
             int gray = qGray(lineSrc[x]);
             int grayPct = qRound(gray * 100.0 / 255.0);
 
-            bool isMetalPixel = isMetal(col, finishType, goldThresh);
+            bool isMetalPixel = isMetal(col, finishType, pixelGold);
             // 丝印判定：深色阻焊 = 源图亮像素（白墨印深色板）；
             // 白色阻焊 = 源图暗像素（黑墨印白板）——色彩逻辑与其他阻焊相反，
             // 保证输出明暗与源图一致（该白的地方白、该黑的地方黑）。
             bool silk = !isMetalPixel && (isWhiteMask
-                ? (gray < (255 - silkThresh))
-                : (gray > silkThresh));
+                ? (gray < (255 - pixelSilk))
+                : (gray > pixelSilk));
             // 敷铜判定：深色阻焊 = 灰度较亮处；白色阻焊相反 = 灰度较深处
             // （还没到黑色丝印的那一段），有铜的白油显浅灰、无铜的白油显白。
             bool copperUnderMask = !isMetalPixel && !silk && (isWhiteMask
-                ? (gray < effectiveCopperThresh)
-                : (gray > effectiveCopperThresh));
+                ? (gray < pixelCopper)
+                : (gray > pixelCopper));
             bool bareSubstratePixel = false;
 
             if (enableBareSubstrate && !isMetalPixel) {
                 if (bareSubstrateUseGrayBinding) {
-                    bareSubstratePixel = (grayPct >= grayMinPct && grayPct <= grayMaxPct);
+                    bareSubstratePixel = (grayPct >= pixelBareMin && grayPct <= pixelBareMax);
                 } else {
-                    bareSubstratePixel = (colorSimilarityPercent(col, bareSubstrateColor) >= similarityThreshold);
+                    bareSubstratePixel = (colorSimilarityPercent(col, bareSubstrateColor) >= pixelSimilarity);
                 }
             }
 
@@ -278,7 +303,7 @@ void ImageProcessor::buildBaseLayers(
             }
 
             // 裸露基材同时作用于丝印层剔除和阻焊开窗：启用裸露基材时，相应位置应当被视为阻焊开窗（即不覆盖阻焊）。
-            bool bottomOpen = (gray > transThresh);
+            bool bottomOpen = (gray > pixelTrans);
             bool maskOpen = isMetalPixel || (silk && !isWhiteMask) || bareSubstratePixel;
 
             lineCopper[x] = (isMetalPixel || copperUnderMask) ? 0xFFFFFFFF : 0xFF000000;
@@ -398,7 +423,8 @@ void ImageProcessor::processImage(
     QImage& outBottom,
     QImage& outComposite,
     const QVector<LEDStrip>& ledStrips,
-    bool renderLEDs) {
+    bool renderLEDs,
+    const Regions::RenderContext* regions) {
     if (srcImage.isNull()) {
         outCopper = QImage();
         outMask = QImage();
@@ -408,7 +434,8 @@ void ImageProcessor::processImage(
         return;
     }
 
-    if (!isBaseCacheValid(srcImage, goldThresh, silkThresh, transThresh, copperUnderMaskThresh, maskColorName, finishType, isWhiteMask,
+    const quint64 regionRevision = regions ? regions->revision : 0;
+    if (m_cachedRegionRevision != regionRevision || !isBaseCacheValid(srcImage, goldThresh, silkThresh, transThresh, copperUnderMaskThresh, maskColorName, finishType, isWhiteMask,
                           enableBareSubstrate, bareSubstrateUseGrayBinding, bareSubstrateGrayMinPct, bareSubstrateGrayMaxPct, bareSubstrateColorSimilarityPct)) {
         buildBaseLayers(
             srcImage,
@@ -428,8 +455,10 @@ void ImageProcessor::processImage(
             outMask,
             outSilk,
             outBottom,
-            outComposite);
+            outComposite,
+            regions);
 
+        m_cachedRegionRevision = regionRevision;
         storeBaseCache(
             srcImage,
             goldThresh,
